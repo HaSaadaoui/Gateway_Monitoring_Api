@@ -5,22 +5,14 @@ import org.eclipse.paho.client.mqttv3.MqttClient;
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
 import org.eclipse.paho.client.mqttv3.MqttException;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Repository;
 
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 @Repository
 public class MonitoringDao {
 
-    @Value("${mqtt.port}")
-    private int mqttPort;
-
-    @Value("${mqtt.username}")
-    private String username;
-
-    @Value("${mqtt.password}")
-    private String password;
+    private MqttClient client;
 
     private final MqttConfig.MyGateway myGateway;
 
@@ -29,28 +21,48 @@ public class MonitoringDao {
         this.myGateway = myGateway;
     }
 
-    public String getMonitoringData(String id) {
-        AtomicReference<String> result = new AtomicReference<>("");
+    /**
+     * Démarre l'écoute d'un topic MQTT et traite les messages JSON reçus en temps réel.
+     *
+     * @param brokerUrl          L'URL du broker MQTT (ex. "tcp://localhost:1883").
+     * @param username           Le nom d'utilisateur pour la connexion au broker.
+     * @param password           Le mot de passe associé à l'utilisateur.
+     * @param topic                  Le nom du topic à écouter (ex. "zigbee2mqtt/maGateway").
+     * @param onMessageReceived  Fonction de rappel (callback) exécutée à chaque fois qu’un nouveau message arrive sur le topic.
+     *
+     */
+    public void startListening(String brokerUrl, String username, String password, String topic, Consumer<String> onMessageReceived) {
         try {
-            MqttClient client = new MqttClient("tcp://10.243.129.10:1883", MqttClient.generateClientId());
+            client = new MqttClient(brokerUrl, MqttClient.generateClientId());
             MqttConnectOptions options = new MqttConnectOptions();
             options.setUserName(username);
             options.setPassword(password.toCharArray());
             client.connect(options);
 
-            String responseTopic = "nom du topic qui est dans le broker lié aux données";
-            client.subscribe(responseTopic, 1, (t, msg) -> {
-                result.set(new String(msg.getPayload()));
+            client.subscribe(topic, (t, msg) -> {
+                String json = new String(msg.getPayload());
+                onMessageReceived.accept(json);
             });
 
-            client.disconnect();
         } catch (MqttException e) {
             e.printStackTrace();
         }
-
-        return result.get();
     }
 
-
+    /**
+     * Déconnecte proprement le client MQTT si celui-ci est encore connecté,
+     * puis ferme la connexion afin de libérer les ressources.
+     *
+     */
+    public void stopListening() {
+        try {
+            if (client != null && client.isConnected()) {
+                client.disconnect();
+                client.close();
+            }
+        } catch (MqttException e) {
+            e.printStackTrace();
+        }
+    }
 
 }
