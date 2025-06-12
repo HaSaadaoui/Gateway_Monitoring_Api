@@ -65,6 +65,20 @@
 			<artifactId>spring-integration-mqtt</artifactId>
 			<version>6.4.4</version>
 		</dependency>
+
+		<!-- Pour les connexions SSH -->
+		<!-- https://mvnrepository.com/artifact/org.apache.sshd/sshd-core -->
+		<dependency>
+			<groupId>org.apache.sshd</groupId>
+			<artifactId>sshd-core</artifactId>
+			<version>2.15.0</version>
+		</dependency>
+
+		<!-- Pour utiliser webClient -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-webflux</artifactId>
+		</dependency>
 	</dependencies>
 
 	<build>
