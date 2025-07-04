@@ -18,37 +18,38 @@ public class HttpMonitoringDao {
     @Value("${lorawan.token}")
     private String lorawanToken;
 
-//    private static final String LORAWAN_GATEWAY_STATUS = "/connection_stats";
-    private final WebClient webClient;
+    private final WebClient.Builder webClientBuilder;
 
     @Autowired
-    public HttpMonitoringDao(WebClient webClient) {
-        this.webClient = webClient;
+    public HttpMonitoringDao(WebClient.Builder webClientBuilder) {
+        this.webClientBuilder = webClientBuilder;
     }
 
     public String fetchGatewayData(String gatewayID) {
 
         String gatewayInfos = "";
         String createdAt = "";
-//        String statusInfo = "";
-//        String status = "";
+        boolean statut = false;
+        String timeOfStatut = "";
         HttpClient httpClient = HttpClient.create()
                 .responseTimeout(Duration.ofSeconds(5));
 
         try {
-            WebClient client = WebClient.builder()
+            WebClient client = webClientBuilder
                     .clientConnector(new ReactorClientHttpConnector(httpClient))
                     .baseUrl(lorawanBaseUrl)
                     .defaultHeader("Authorization", "Bearer " + lorawanToken)
                     .build();
 
             gatewayInfos = client.get()
-                    .uri(gatewayID)
+                    .uri(gatewayID  + "/events/up")
                     .retrieve()
                     .bodyToMono(String.class)
                     .block();
             if (gatewayInfos != null && !gatewayInfos.equals("")) {
                 createdAt = extractCreatedAtValue(gatewayInfos);
+                statut = isGatewayOn(gatewayInfos);
+                timeOfStatut = extractTimeValue(gatewayInfos);
             }
 
 //            statusInfo = client.get()
@@ -69,20 +70,46 @@ public class HttpMonitoringDao {
      * Extrait dynamiquement la valeur du champ "created_at" à partir d'une chaîne de caractères
      * représentant une réponse HTTP brute au format JSON.
      *
-     * @param responseHttp la réponse HTTP brute sous forme de chaîne
+     * @param json la réponse HTTP brute sous forme de chaîne
      * @return la valeur du champ "created_at" si trouvée, sinon une chaîne vide
      */
-    public String extractCreatedAtValue(String responseHttp) {
+    public String extractCreatedAtValue(String json) {
         String startTag = "created_at\":\"";
-        int startIndex = responseHttp.indexOf(startTag);
+        int startIndex = json.indexOf(startTag);
         if (startIndex == -1) return "";
 
         startIndex += startTag.length();
-        int endIndex = responseHttp.indexOf("\"", startIndex);
+        int endIndex = json.indexOf("\"", startIndex);
         if (endIndex == -1) return "";
 
-        return responseHttp.substring(startIndex, endIndex);
+        return json.substring(startIndex, endIndex);
     }
+
+    public boolean isGatewayOn(String json) {
+        String startTag = "\"name\":\"";
+        int startIndex = json.indexOf(startTag);
+        if (startIndex == -1) return false;
+
+        startIndex += startTag.length();
+        int endIndex = json.indexOf("\"", startIndex);
+        if (endIndex == -1) return false;
+
+        String nameValue = json.substring(startIndex, endIndex);
+        return nameValue.endsWith("receive");
+    }
+
+    public String extractTimeValue(String json) {
+        String startTag = "\"time\":\"";
+        int startIndex = json.indexOf(startTag);
+        if (startIndex == -1) return "";
+
+        startIndex += startTag.length();
+        int endIndex = json.indexOf("\"", startIndex);
+        if (endIndex == -1) return "";
+
+        return json.substring(startIndex, endIndex);
+    }
+
 
     /**
      * Construit une chaîne JSON partielle sans accolades externes,

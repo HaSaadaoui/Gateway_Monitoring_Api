@@ -54,12 +54,12 @@ public class MonitoringController {
      */
     @GetMapping(value="/monitoring/gateway/{id}", produces=MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<String> streamGatewayMonitoring(@PathVariable String id, @RequestParam String ip) {
-        return Flux.create(sink -> {
+        return Flux.create(sink ->
             aggregatorMonitoringService.aggregateRaspberryLorawanMonitoring(id, ip, json -> {
                 System.out.println(json);
                 sink.next(json);
-            });
-        });
+            })
+        );
     }
 
     /**

@@ -26,7 +26,6 @@ public class MqttConfig {
     private String password;
 
     private static final String STATIC_BROKER_URL_FOR_TEST = "tcp://10.243.129.10:1883";
-    private static final String CLIENT_ID = MqttClient.generateClientId();
 
     @Bean
     public MqttPahoClientFactory mqttClientFactory() {
