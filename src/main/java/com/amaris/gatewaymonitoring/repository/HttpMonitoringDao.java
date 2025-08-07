@@ -29,8 +29,8 @@ public class HttpMonitoringDao {
 
         String gatewayInfos = "";
         String createdAt = "";
-        boolean statut = false;
-        String timeOfStatut = "";
+//        boolean statut = false;
+//        String timeOfStatut = "";
         HttpClient httpClient = HttpClient.create()
                 .responseTimeout(Duration.ofSeconds(5));
 
@@ -42,25 +42,15 @@ public class HttpMonitoringDao {
                     .build();
 
             gatewayInfos = client.get()
-                    .uri(gatewayID  + "/events/up")
+                    .uri(gatewayID) //  + "/events/up")
                     .retrieve()
                     .bodyToMono(String.class)
                     .block();
             if (gatewayInfos != null && !gatewayInfos.equals("")) {
                 createdAt = extractCreatedAtValue(gatewayInfos);
-                statut = isGatewayOn(gatewayInfos);
-                timeOfStatut = extractTimeValue(gatewayInfos);
+//                statut = isGatewayOn(gatewayInfos);
+//                timeOfStatut = extractTimeValue(gatewayInfos);
             }
-
-//            statusInfo = client.get()
-//                    .uri(gatewayId + LORAWAN_GATEWAY_STATUS)
-//                    .retrieve()
-//                    .bodyToMono(String.class)
-//                    .block();
-//            if (statusInfo != null && !statusInfo.equals("")) {
-//                status = extractStatus(statusInfo);
-//            }
-
         } catch (Exception e) { return ""; }
 
         return buildLorawanJson(createdAt);
@@ -109,7 +99,6 @@ public class HttpMonitoringDao {
 
         return json.substring(startIndex, endIndex);
     }
-
 
     /**
      * Construit une chaîne JSON partielle sans accolades externes,

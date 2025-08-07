@@ -33,6 +33,7 @@ public class SshMonitoringDao {
              "$(top -bn1 | grep \"Cpu(s)\" | awk '{print 100 - $8}') " +
              "$(awk '{print $1/1000}' /sys/class/thermal/thermal_zone0/temp) " +
              "$(free -g | awk '/Mem:/ {print $2, $3}')\" " +
+             "$(df -h / | awk 'NR==2 {print $2, $3, $4, $5}') " +
              "$(uptime_seconds=$(cut -d. -f1 /proc/uptime); echo \"" +
              "$(( uptime_seconds / 86400 )) days $(( (uptime_seconds % 86400) / 3600 )) hours\")\n" +
              "sleep 10; " +
@@ -97,7 +98,7 @@ public class SshMonitoringDao {
      */
     public String buildJson(String lineShell) {
         String[] parts = lineShell.trim().split("\\s+");
-        if (parts.length < 10) return "{}";
+        if (parts.length < 15) return "{}";
 
         String timestamp = parts[0];
         String hostname = parts[1];
@@ -107,7 +108,11 @@ public class SshMonitoringDao {
         double cpuTemp = Double.parseDouble(parts[5]);
         double ramTotal = Double.parseDouble(parts[6]);
         double ramUsed = Double.parseDouble(parts[7]);
-        String uptimeDays = parts[8] + " " + parts[9] + " " + parts[10] + " " + parts[11];
+        String diskTotal = parts[8];
+        String diskUsed = parts[9];
+        String diskAvail = parts[10];
+        String diskUsage = parts[11];
+        String uptimeDays = parts[12] + " " + parts[13] + " " + parts[14] + " " + parts[15];
 
         String json = "{\n" +
                 "\t\"timestamp\": \"" + timestamp + "\",\n" +
@@ -119,6 +124,10 @@ public class SshMonitoringDao {
                 "\t\t\"cpu_temp (C)\": " + cpuTemp + ",\n" +
                 "\t\t\"ram_total_gb (GB)\": " + ramTotal + ",\n" +
                 "\t\t\"ram_used_gb (GB)\": " + ramUsed + ",\n" +
+                "\t\t\"disk_total\": \"" + diskTotal + "\",\n" +
+                "\t\t\"disk_used\": \"" + diskUsed + "\",\n" +
+                "\t\t\"disk_available\": \"" + diskAvail + "\",\n" +
+                "\t\t\"disk_usage_percent\": \"" + diskUsage + "\",\n" +
                 "\t\t\"uptime_days\": \"" + uptimeDays + "\"\n" +
                 "\t}\n" +
                 "}";

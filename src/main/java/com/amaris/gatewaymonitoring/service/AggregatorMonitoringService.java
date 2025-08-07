@@ -31,9 +31,9 @@ public class AggregatorMonitoringService {
      * @param onJsonReceived fonction consommateur qui reçoit les données JSON agrégées
      */
     public void aggregateRaspberryLorawanMonitoring(String gatewayID, String gatewayIP, Consumer<String> onJsonReceived) {
-        mqttMonitoringService.startMqttMonitoring("eu1.cloud.thethings.network", onJsonReceived);
+//        mqttMonitoringService.startMqttMonitoring("eu1.cloud.thethings.network", onJsonReceived);
 
-        String gateway_id = "leva-rpi-mantu"; // "rpi-mantu";
+        String gateway_id = "rpi-mantu"; // "leva-rpi-mantu";
         String lorawanJson = httpMonitoringService.getLorawanData(gateway_id); // remplacer ensuite par gatewayID
 
         sshMonitoringService.startSshMonitoring(gatewayID, gatewayIP, raspberryJson -> {

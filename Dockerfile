@@ -13,7 +13,7 @@ WORKDIR /opt/app
 COPY target/gateway-monitoring-api-0.0.1-SNAPSHOT.jar /gateway-monitoring.jar
 
 ### Exposer le port de l'application (si nécessaire) ###
-EXPOSE 8080
+EXPOSE 8081
 
 ### Commande pour démarrer l'application ###
 CMD ["java", "-jar", "/gateway-monitoring.jar"]
