@@ -1,4 +1,4 @@
-name: Deploy to Raspberry Pi with Docker
+name: Deploy to Raspberry Pi with Docker Compose
 
 on:
   push:
