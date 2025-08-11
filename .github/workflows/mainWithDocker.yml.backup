@@ -3,7 +3,7 @@ name: Deploy to Raspberry Pi with Docker
 on:
   push:
     branches:
-      - main
+      - master
   workflow_dispatch:
 
 jobs:
@@ -20,8 +20,9 @@ jobs:
       - name: Build project
         run: ./mvnw clean package -DskipTests
 
-      - name: Build Docker image
-        run: docker build --platform linux/arm64 --no-cache -t monitoring .
+      - name: Build and tag Docker image
+        run: |
+          docker build --platform linux/arm64 --no-cache -t localhost:5000/app-monitoring:latest .
 
       - name: Install OpenVPN 2.5.7
         run: |
@@ -66,13 +67,17 @@ jobs:
 
       - name: Stop and remove existing Docker container and image
         run: |
-          sshpass -p ${{ secrets.RASPBERRY_PASSWORD }} ssh -o StrictHostKeyChecking=no ${{ secrets.RASPBERRY_USER }}@${{ secrets.RASPBERRY_HOST }} 'echo ${{ secrets.RASPBERRY_PASSWORD }} | sudo -S docker stop monitoring || true && echo ${{ secrets.RASPBERRY_PASSWORD }} | sudo -S docker rm monitoring || true'
-          sshpass -p ${{ secrets.RASPBERRY_PASSWORD }} ssh -o StrictHostKeyChecking=no ${{ secrets.RASPBERRY_USER }}@${{ secrets.RASPBERRY_HOST }} 'echo ${{ secrets.RASPBERRY_PASSWORD }} | sudo -S docker rmi monitoring || true'
+          sshpass -p ${{ secrets.RASPBERRY_PASSWORD }} ssh -o StrictHostKeyChecking=no ${{ secrets.RASPBERRY_USER }}@${{ secrets.RASPBERRY_HOST }} '
+            echo ${{ secrets.RASPBERRY_PASSWORD }} | sudo -S docker stop monitoring || true && \
+            echo ${{ secrets.RASPBERRY_PASSWORD }} | sudo -S docker rm monitoring || true && \
+            echo ${{ secrets.RASPBERRY_PASSWORD }} | sudo -S docker rmi localhost:5000/app-monitoring:latest || true && \
+            echo ${{ secrets.RASPBERRY_PASSWORD }} | sudo -S docker image prune -f
+            '
 
       - name: Copy Docker image to Raspberry Pi
         run: |
           echo "Starting Docker save"
-          docker save monitoring -o image.tar
+          docker save localhost:5000/app-monitoring:latest -o image.tar
           echo "Docker save completed"
           echo "Compressing image"
           gzip image.tar
@@ -86,6 +91,6 @@ jobs:
           sshpass -p "${{ secrets.RASPBERRY_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.RASPBERRY_USER }}@${{ secrets.RASPBERRY_HOST }} 'echo ${{ secrets.RASPBERRY_PASSWORD }} | sudo -S bash -c "gunzip -f /tmp/image.tar.gz && docker load -i /tmp/image.tar"'
           echo "SSH and Docker load completed"
 
-      - name: Run Docker container on Raspberry Pi
+      - name: Run Docker Compose on Raspberry Pi
         run: |
-          sshpass -p ${{ secrets.RASPBERRY_PASSWORD }} ssh -o StrictHostKeyChecking=no ${{ secrets.RASPBERRY_USER }}@${{ secrets.RASPBERRY_HOST }} 'echo ${{ secrets.RASPBERRY_PASSWORD }} | sudo -S docker run -d -e DB_PATH=/opt/app -v /opt/app:/opt/app -p 8081:8080 --name monitoring monitoring'
+          sshpass -p ${{ secrets.RASPBERRY_PASSWORD }} ssh -o StrictHostKeyChecking=no ${{ secrets.RASPBERRY_USER }}@${{ secrets.RASPBERRY_HOST }} 'echo ${{ secrets.RASPBERRY_PASSWORD }} | sudo -S docker-compose -f /opt/app/docker-compose.yml up -d'
