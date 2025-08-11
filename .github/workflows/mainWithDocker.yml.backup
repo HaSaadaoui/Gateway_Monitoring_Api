@@ -48,7 +48,7 @@ jobs:
           username: ${{ secrets.OVPN_USERNAME }}
           password: ${{ secrets.OVPN_PASSWORD }}
 
-      - name: Install Docker on Raspberry Pi
+      - name: Install Docker on Raspberry Pi 
         run: |
           sshpass -p ${{ secrets.RASPBERRY_PASSWORD }} ssh -o StrictHostKeyChecking=no ${{ secrets.RASPBERRY_USER }}@${{ secrets.RASPBERRY_HOST }} '
             if ! command -v docker &> /dev/null; then
