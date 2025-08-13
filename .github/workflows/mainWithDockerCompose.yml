@@ -70,8 +70,7 @@ jobs:
           sshpass -p ${{ secrets.RASPBERRY_PASSWORD }} ssh -o StrictHostKeyChecking=no ${{ secrets.RASPBERRY_USER }}@${{ secrets.RASPBERRY_HOST }} '
             echo ${{ secrets.RASPBERRY_PASSWORD }} | sudo -S docker stop monitoring || true && \
             echo ${{ secrets.RASPBERRY_PASSWORD }} | sudo -S docker rm monitoring || true && \
-            echo ${{ secrets.RASPBERRY_PASSWORD }} | sudo -S docker rmi localhost:5000/app-monitoring:latest || true && \
-            echo ${{ secrets.RASPBERRY_PASSWORD }} | sudo -S docker image prune -f
+            echo ${{ secrets.RASPBERRY_PASSWORD }} | sudo -S docker rmi localhost:5000/app-monitoring:latest
             '
 
       - name: Copy Docker image to Raspberry Pi
