@@ -64,7 +64,7 @@ public class MonitoringController {
 
     /**
      * Arrête la surveillance SSH pour la gateway identifiée par son ID.
-     * Tester avec l'url http://localhost:8081/api/monitoring/gateway/stop/<gatewayId>
+     * Tester avec l'url http:\//localhost:8081/api/monitoring/gateway/stop/<gatewayId>
      *
      * @param id l'identifiant de la gateway dont la surveillance doit être arrêtée
      * @return une réponse HTTP 200 OK avec un message confirmant l'arrêt de la surveillance
