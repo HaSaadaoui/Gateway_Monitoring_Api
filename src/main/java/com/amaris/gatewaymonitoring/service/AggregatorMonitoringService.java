@@ -1,5 +1,6 @@
 package com.amaris.gatewaymonitoring.service;
 
+import jakarta.servlet.http.HttpSession;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -28,15 +29,16 @@ public class AggregatorMonitoringService {
      *
      * @param gatewayID l'id du Raspberry Pi cible
      * @param gatewayIP l'ip du Raspberry Pi cible
+     * @param threadId est l'id du thread qui sera créé pour écouter le système
      * @param onJsonReceived fonction consommateur qui reçoit les données JSON agrégées
      */
-    public void aggregateRaspberryLorawanMonitoring(String gatewayID, String gatewayIP, Consumer<String> onJsonReceived) {
+    public void aggregateRaspberryLorawanMonitoring(String gatewayID, String gatewayIP, String threadId, Consumer<String> onJsonReceived) {
 //        mqttMonitoringService.startMqttMonitoring("eu1.cloud.thethings.network", onJsonReceived);
 
         String gateway_id = "rpi-mantu"; // "leva-rpi-mantu";
         String lorawanJson = httpMonitoringService.getLorawanData(gateway_id); // remplacer ensuite par gatewayID
 
-        sshMonitoringService.startSshMonitoring(gatewayID, gatewayIP, raspberryJson -> {
+        sshMonitoringService.startSshMonitoring(gatewayID, gatewayIP, threadId, raspberryJson -> {
             String aggregatedJson = mergeJson(raspberryJson, lorawanJson);
             onJsonReceived.accept(aggregatedJson);
         });

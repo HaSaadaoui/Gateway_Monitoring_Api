@@ -1,6 +1,7 @@
 package com.amaris.gatewaymonitoring.service;
 
 import com.amaris.gatewaymonitoring.repository.SshMonitoringDao;
+import jakarta.servlet.http.HttpSession;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -16,14 +17,14 @@ public class SshMonitoringService {
         this.sshMonitoringDao = sshMonitoringDao;
     }
 
-    public void startSshMonitoring(String gatewayID, String gatewayIP, Consumer<String> onJsonReceived) {
-        sshMonitoringDao.startSshListening(gatewayID, gatewayIP, json -> {
+    public void startSshMonitoring(String gatewayID, String gatewayIP, String threadId, Consumer<String> onJsonReceived) {
+        sshMonitoringDao.startSshListening(gatewayID, gatewayIP, threadId, json -> {
             onJsonReceived.accept(json);
         });
     }
 
-    public void stopSshMonitoring(String id) {
-        sshMonitoringDao.stopSshListening(id);
+    public void stopSshMonitoring(String id, String threadId) {
+        sshMonitoringDao.stopSshListening(threadId);
     }
 
 }

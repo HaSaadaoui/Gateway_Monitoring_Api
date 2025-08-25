@@ -3,6 +3,7 @@ package com.amaris.gatewaymonitoring.controller;
 import com.amaris.gatewaymonitoring.service.AggregatorMonitoringService;
 //import com.amaris.gatewaymonitoring.service.MqttMonitoringService;
 import com.amaris.gatewaymonitoring.service.SshMonitoringService;
+import jakarta.servlet.http.HttpSession;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -50,12 +51,13 @@ public class MonitoringController {
      *
      * @param id est l'id de la passerelle cible
      * @param ip est l'ip de la passerelle cible
+     * @param threadId est l'id du thread qui sera créé pour écouter le système
      * @return un flux SSE (Server-Sent Events) émettant les données système au format JSON
      */
     @GetMapping(value="/monitoring/gateway/{id}", produces=MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<String> streamGatewayMonitoring(@PathVariable String id, @RequestParam String ip) {
+    public Flux<String> streamGatewayMonitoring(@PathVariable String id, @RequestParam String ip, @RequestParam String threadId) {
         return Flux.create(sink ->
-            aggregatorMonitoringService.aggregateRaspberryLorawanMonitoring(id, ip, json -> {
+            aggregatorMonitoringService.aggregateRaspberryLorawanMonitoring(id, ip, threadId, json -> {
                 System.out.println(json);
                 sink.next(json);
             })
@@ -67,11 +69,12 @@ public class MonitoringController {
      * Tester avec l'url http:\//localhost:8081/api/monitoring/gateway/stop/<gatewayId>
      *
      * @param id l'identifiant de la gateway dont la surveillance doit être arrêtée
+     * @param threadId est l'id du thread qui sera détruit
      * @return une réponse HTTP 200 OK avec un message confirmant l'arrêt de la surveillance
      */
     @GetMapping("/monitoring/gateway/stop/{id}")
-    public ResponseEntity<String> stopMonitoring(@PathVariable String id) {
-        sshMonitoringService.stopSshMonitoring(id);
+    public ResponseEntity<String> stopMonitoring(@PathVariable String id, @RequestParam String threadId) {
+        sshMonitoringService.stopSshMonitoring(id, threadId);
         return ResponseEntity.ok("Monitoring stopped for gateway with ID: " + id);
     }
 

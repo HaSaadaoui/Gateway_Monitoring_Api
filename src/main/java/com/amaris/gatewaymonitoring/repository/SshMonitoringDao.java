@@ -1,5 +1,6 @@
 package com.amaris.gatewaymonitoring.repository;
 
+import jakarta.servlet.http.HttpSession;
 import org.apache.sshd.client.SshClient;
 import org.apache.sshd.client.channel.ClientChannel;
 import org.apache.sshd.client.session.ClientSession;
@@ -39,7 +40,7 @@ public class SshMonitoringDao {
              "sleep 10; " +
              "done";
 
-    public void startSshListening(String gatewayID, String gatewayIP, Consumer<String> onJsonReceived) {
+    public void startSshListening(String gatewayID, String gatewayIP, String threadId, Consumer<String> onJsonReceived) {
         Thread monitoringThread = new Thread(() -> {
             SshClient client = SshClient.setUpDefaultClient();
             client.start();
@@ -73,20 +74,20 @@ public class SshMonitoringDao {
                 client.stop();
             }
         });
-        monitoringThreads.put(gatewayID, monitoringThread);
+        monitoringThreads.put(threadId, monitoringThread);
         monitoringThread.start();
     }
 
     /**
      * Interrompt et arrête le thread de surveillance SSH associé à l'adresse IP du Raspberry Pi donnée.
      *
-     * @param gatewayID l'adresse IP du Raspberry Pi dont la surveillance doit être arrêtée
+     * @param threadID l'id du thread à couper
      */
-    public void stopSshListening(String gatewayID) {
-        Thread thread = monitoringThreads.get(gatewayID);
+    public void stopSshListening(String threadID) {
+        Thread thread = monitoringThreads.get(threadID);
         if (thread != null && thread.isAlive()) {
             thread.interrupt();
-            monitoringThreads.remove(gatewayID);
+            monitoringThreads.remove(threadID);
         }
     }
 
