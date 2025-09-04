@@ -15,14 +15,17 @@ public class HttpMonitoringDao {
     @Value("${lorawan.baseurl}")
     private String lorawanBaseUrl;
 
-    @Value("${lorawan.token}")
-    private String lorawanToken;
+//    @Value("${lorawan.token}")
+//    private String lorawanToken;
 
     @Value("${lorawan.application.baseurl}")
     private String lorawanApplicationBaseUrl;
 
-    @Value("${lorawan.token.reseau-lorawan}")
-    private String lorawanApplicationToken;
+//    @Value("${lorawan.token.reseau-lorawan}")
+//    private String lorawanApplicationToken;
+
+    @Value("${lorawan.service.token}")
+    private String lorawanServiceToken;
 
     private final WebClient.Builder webClientBuilder;
 
@@ -44,7 +47,7 @@ public class HttpMonitoringDao {
             WebClient client = webClientBuilder
                     .clientConnector(new ReactorClientHttpConnector(httpClient))
                     .baseUrl(lorawanBaseUrl)
-                    .defaultHeader("Authorization", "Bearer " + lorawanToken)
+                    .defaultHeader("Authorization", "Bearer " + lorawanServiceToken)
                     .build();
 
             gatewayInfos = client.get()
@@ -71,12 +74,13 @@ public class HttpMonitoringDao {
             WebClient client = webClientBuilder
                     .clientConnector(new ReactorClientHttpConnector(httpClient))
                     .baseUrl(lorawanApplicationBaseUrl)
-                    .defaultHeader("Authorization", "Bearer " + lorawanApplicationToken)
+//                    .defaultHeader("Authorization", "Bearer " + lorawanApplicationToken)
+                    .defaultHeader("Authorization", "Bearer " + lorawanServiceToken)
                     .build();
 
             devices = client.get()
-//                    .uri(gatewayID + "-app" + "/devices")
-                    .uri("reseau-lorawan" + "/devices") // A SUPPRIMER
+                    .uri(gatewayID + "-app" + "/devices")
+//                    .uri("reseau-lorawan" + "/devices") // A SUPPRIMER
                     .retrieve()
                     .bodyToMono(String.class)
                     .block();

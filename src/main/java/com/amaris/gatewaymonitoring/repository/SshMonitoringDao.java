@@ -17,10 +17,16 @@ import java.util.function.Consumer;
 @Repository
 public class SshMonitoringDao {
 
-    @Value("${mqtt.username}")
+//    @Value("${mqtt.username}")
+//    private String username;
+//
+//    @Value("${mqtt.password}")
+//    private String password;
+
+    @Value("${ssh.username}")
     private String username;
 
-    @Value("${mqtt.password}")
+    @Value("${ssh.password}")
     private String password;
 
     private final Map<String, Thread> monitoringThreads = new ConcurrentHashMap<>();
@@ -44,9 +50,10 @@ public class SshMonitoringDao {
         Thread monitoringThread = new Thread(() -> {
             SshClient client = SshClient.setUpDefaultClient();
             client.start();
-            String ipPublicTest = "10.243.129.10"; // A REMPLACER PAR gatewayIP
+//            String ipPublicTest = "10.243.129.10"; // A REMPLACER PAR gatewayIP
 
-            try (ClientSession session = client.connect(username, ipPublicTest, 22).verify(10000).getSession()) {
+//            try (ClientSession session = client.connect(username, ipPublicTest, 22).verify(10000).getSession()) {
+            try (ClientSession session = client.connect(username, gatewayIP, 22).verify(10000).getSession()) {
                 session.addPasswordIdentity(password);
                 session.auth().verify(5000);
 
