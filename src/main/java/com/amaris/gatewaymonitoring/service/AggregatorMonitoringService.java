@@ -12,15 +12,18 @@ public class AggregatorMonitoringService {
     private final SshMonitoringService sshMonitoringService;
     private final HttpMonitoringService httpMonitoringService;
     private final MqttMonitoringService mqttMonitoringService;
+    private final DatabaseMonitoringService databaseMonitoringService;
 
     @Autowired
     public AggregatorMonitoringService(
             SshMonitoringService sshMonitoringService,
             HttpMonitoringService httpMonitoringService,
-            MqttMonitoringService mqttMonitoringService) {
+            MqttMonitoringService mqttMonitoringService,
+            DatabaseMonitoringService databaseMonitoringService) {
         this.sshMonitoringService = sshMonitoringService;
         this.httpMonitoringService = httpMonitoringService;
         this.mqttMonitoringService = mqttMonitoringService;
+        this.databaseMonitoringService = databaseMonitoringService;
     }
 
     /**
@@ -35,33 +38,45 @@ public class AggregatorMonitoringService {
     public void aggregateRaspberryLorawanMonitoring(String gatewayID, String gatewayIP, String threadId, Consumer<String> onJsonReceived) {
 //        mqttMonitoringService.startMqttMonitoring("eu1.cloud.thethings.network", onJsonReceived);
 
-        String gateway_id = "rpi-mantu"; // "leva-rpi-mantu";
-        String lorawanJson = httpMonitoringService.getLorawanData(gateway_id); // remplacer ensuite par gatewayID
+//        String gateway_id = "rpi-mantu"; // "leva-rpi-mantu";
+//        String lorawanJson = httpMonitoringService.getLorawanData(gateway_id); // remplacer ensuite par gatewayID
+        String lorawanJson = httpMonitoringService.getLorawanData(gatewayID);
+
+//        String databaseJson = databaseMonitoringService.getGatewayLocationData(gateway_id);
+        String databaseJson = databaseMonitoringService.getGatewayLocationData(gatewayID);
 
         sshMonitoringService.startSshMonitoring(gatewayID, gatewayIP, threadId, raspberryJson -> {
-            String aggregatedJson = mergeJson(raspberryJson, lorawanJson);
+            String aggregatedJson = mergeJson(raspberryJson, lorawanJson, databaseJson);
             onJsonReceived.accept(aggregatedJson);
         });
     }
 
     /**
-     * Injecte un bloc JSON Lorawan dans un JSON principal.
+     * Fusionne trois JSON en un seul : système, Lorawan et base.
+     * Nettoie les accolades et retours à la ligne pour un JSON lisible.
      *
-     * @param raspberryJson Le JSON de base contenant les informations système.
-     * @param lorawanJson   Le JSON Lorawan à injecter commençant typiquement par "ttn": { ... }.
-     * @return Une chaîne JSON combinée contenant à la fois les données système et Lorawan.
+     * @param raspberryJson JSON système du Raspberry Pi
+     * @param lorawanJson JSON des devices Lorawan
+     * @param databaseJson Localisation depuis la base
+     * @return JSON combiné propre et indenté
      */
-    public String mergeJson(String raspberryJson, String lorawanJson) {
+    public String mergeJson(String raspberryJson, String lorawanJson, String databaseJson) {
         if (raspberryJson == null || raspberryJson.isBlank() || raspberryJson.equals("{}")) return "{}";
         if (lorawanJson == null || lorawanJson.isBlank() || lorawanJson.equals("{}")) return raspberryJson;
 
-        raspberryJson = raspberryJson.replaceFirst("(?s)(.*)}\\n", "$1},\n");
-        StringBuilder mergedJson = new StringBuilder(raspberryJson);
-        mergedJson.deleteCharAt(mergedJson.lastIndexOf("}")); // Retire la dernière }
-        mergedJson.append(lorawanJson);
-        mergedJson.append("\n}");
+        raspberryJson = raspberryJson.trim();
+        if (raspberryJson.endsWith("}")) {
+            raspberryJson = raspberryJson.substring(0, raspberryJson.length() - 1).trim();
+        }
+        raspberryJson += ",";
 
-        return mergedJson.toString();
+        lorawanJson = lorawanJson.trim();
+        if (lorawanJson.startsWith("{") && lorawanJson.endsWith("}")) {
+            lorawanJson = lorawanJson.substring(1, lorawanJson.length() - 1).trim();
+        }
+
+        return raspberryJson + "\n\t" + lorawanJson
+                + ",\n\t\"database\": {\n\t\t\"location\": \"" + databaseJson + "\"\n\t}\n}";
     }
 
 }

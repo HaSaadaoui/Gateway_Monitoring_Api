@@ -18,6 +18,12 @@ public class HttpMonitoringDao {
     @Value("${lorawan.token}")
     private String lorawanToken;
 
+    @Value("${lorawan.application.baseurl}")
+    private String lorawanApplicationBaseUrl;
+
+    @Value("${lorawan.token.reseau-lorawan}")
+    private String lorawanApplicationToken;
+
     private final WebClient.Builder webClientBuilder;
 
     @Autowired
@@ -54,6 +60,32 @@ public class HttpMonitoringDao {
         } catch (Exception e) { return ""; }
 
         return buildLorawanJson(createdAt);
+    }
+
+    public String fetchDevices(String gatewayID) {
+        String devices = "";
+        HttpClient httpClient = HttpClient.create()
+                .responseTimeout(Duration.ofSeconds(5));
+
+        try {
+            WebClient client = webClientBuilder
+                    .clientConnector(new ReactorClientHttpConnector(httpClient))
+                    .baseUrl(lorawanApplicationBaseUrl)
+                    .defaultHeader("Authorization", "Bearer " + lorawanApplicationToken)
+                    .build();
+
+            devices = client.get()
+//                    .uri(gatewayID + "-app" + "/devices")
+                    .uri("reseau-lorawan" + "/devices") // A SUPPRIMER
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block();
+
+            return cleanDevicesJson(devices);
+//            return devices != null ? devices : "";
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     /**
@@ -108,11 +140,49 @@ public class HttpMonitoringDao {
      * @return une chaîne JSON partielle avec la date dans "ttn": {"info": {"created_at": ...}}
      */
     public String buildLorawanJson(String createdAt) {
-        return "\t\"ttn\": {\n" +
+        return "\"ttn\": {\n" +
                 "  \t\t\"info\": {\n" +
                 "    \t\t\t\"created_at\": \"" + createdAt + "\"\n" +
                 "  \t\t}\n" +
                 "\t}";
+    }
+
+    /**
+     * Extrait uniquement les "device_id" et "application_id" d'un JSON brut
+     * de devices TTN et retourne un JSON simplifié avec la liste des capteurs.
+     *
+     * @param devicesjson JSON brut contenant les devices
+     * @return JSON propre avec seulement "device_id" et "application_id"
+     */
+    public String cleanDevicesJson(String devicesjson) {
+        if (devicesjson == null || devicesjson.isEmpty()) return "";
+
+        StringBuilder result = new StringBuilder();
+        result.append("{\n\t\"devices\":[\n");
+
+        int index = 0;
+        boolean first = true;
+
+        while ((index = devicesjson.indexOf("\"device_id\":\"", index)) != -1) {
+            int startDevice = index + "\"device_id\":\"".length();
+            int endDevice = devicesjson.indexOf("\"", startDevice);
+            String deviceId = devicesjson.substring(startDevice, endDevice);
+
+            int appIndex = devicesjson.indexOf("\"application_id\":\"", endDevice);
+            int startApp = appIndex + "\"application_id\":\"".length();
+            int endApp = devicesjson.indexOf("\"", startApp);
+            String appId = devicesjson.substring(startApp, endApp);
+
+            if (!first) result.append(",\n");
+            result.append("\t\t{\"device_id\":\"").append(deviceId)
+                    .append("\",\"application_id\":\"").append(appId).append("\"}");
+            first = false;
+
+            index = endApp;
+        }
+
+        result.append("\n\t]\n}");
+        return result.toString();
     }
 
 }

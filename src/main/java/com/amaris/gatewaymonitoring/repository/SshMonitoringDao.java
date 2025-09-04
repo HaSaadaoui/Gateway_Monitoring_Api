@@ -1,6 +1,5 @@
 package com.amaris.gatewaymonitoring.repository;
 
-import jakarta.servlet.http.HttpSession;
 import org.apache.sshd.client.SshClient;
 import org.apache.sshd.client.channel.ClientChannel;
 import org.apache.sshd.client.session.ClientSession;
@@ -27,18 +26,19 @@ public class SshMonitoringDao {
     private final Map<String, Thread> monitoringThreads = new ConcurrentHashMap<>();
 
     private final String SCRIPT_SHELL = "while true; do " +
-             "echo \"$(date -u +%Y-%m-%dT%H:%M:%SZ) " +
-             "$(hostname) " +
-             "$(hostname -I | awk '{print $1}') " +
-             "$(curl -s https://api.ipify.org) " +
-             "$(top -bn1 | grep \"Cpu(s)\" | awk '{print 100 - $8}') " +
-             "$(awk '{print $1/1000}' /sys/class/thermal/thermal_zone0/temp) " +
-             "$(free -g | awk '/Mem:/ {print $2, $3}')\" " +
-             "$(df -h / | awk 'NR==2 {print $2, $3, $4, $5}') " +
-             "$(uptime_seconds=$(cut -d. -f1 /proc/uptime); echo \"" +
-             "$(( uptime_seconds / 86400 )) days $(( (uptime_seconds % 86400) / 3600 )) hours\")\n" +
-             "sleep 10; " +
-             "done";
+        "status=$(systemctl is-active ttn-gateway); " +
+        "echo \"$(date -u +%Y-%m-%dT%H:%M:%SZ) " +
+        "$(hostname) " +
+        "$(hostname -I | awk '{print $1}') " +
+        "$(curl -s https://api.ipify.org) " +
+        "$(top -bn1 | grep \"Cpu(s)\" | awk '{print 100 - $8}') " +
+        "$(awk '{print $1/1000}' /sys/class/thermal/thermal_zone0/temp) " +
+        "$(free -g | awk '/Mem:/ {print $2, $3}') " +
+        "$(df -h / | awk 'NR==2 {print $2, $3, $4, $5}') " +
+        "$(uptime_seconds=$(cut -d. -f1 /proc/uptime); echo \"$(( uptime_seconds / 86400 )) days $(( (uptime_seconds % 86400) / 3600 )) hours\") " +
+        "$status\"; " +
+        "sleep 10; " +
+        "done";
 
     public void startSshListening(String gatewayID, String gatewayIP, String threadId, Consumer<String> onJsonReceived) {
         Thread monitoringThread = new Thread(() -> {
@@ -114,8 +114,9 @@ public class SshMonitoringDao {
         String diskAvail = parts[10];
         String diskUsage = parts[11];
         String uptimeDays = parts[12] + " " + parts[13] + " " + parts[14] + " " + parts[15];
+        String status = parts[16];
 
-        String json = "{\n" +
+        return "{\n" +
                 "\t\"timestamp\": \"" + timestamp + "\",\n" +
                 "\t\"system\": {\n" +
                 "\t\t\"hostname\": \"" + hostname + "\",\n" +
@@ -129,10 +130,10 @@ public class SshMonitoringDao {
                 "\t\t\"disk_used\": \"" + diskUsed + "\",\n" +
                 "\t\t\"disk_available\": \"" + diskAvail + "\",\n" +
                 "\t\t\"disk_usage_percent\": \"" + diskUsage + "\",\n" +
-                "\t\t\"uptime_days\": \"" + uptimeDays + "\"\n" +
+                "\t\t\"uptime_days\": \"" + uptimeDays + "\",\n" +
+                "\t\t\"gateway_status\": \"" + status + "\"\n" +
                 "\t}\n" +
                 "}";
-        return json;
     }
 
 }

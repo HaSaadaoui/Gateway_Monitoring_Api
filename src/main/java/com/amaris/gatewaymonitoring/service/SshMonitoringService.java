@@ -18,9 +18,7 @@ public class SshMonitoringService {
     }
 
     public void startSshMonitoring(String gatewayID, String gatewayIP, String threadId, Consumer<String> onJsonReceived) {
-        sshMonitoringDao.startSshListening(gatewayID, gatewayIP, threadId, json -> {
-            onJsonReceived.accept(json);
-        });
+        sshMonitoringDao.startSshListening(gatewayID, gatewayIP, threadId, onJsonReceived);
     }
 
     public void stopSshMonitoring(String id, String threadId) {
