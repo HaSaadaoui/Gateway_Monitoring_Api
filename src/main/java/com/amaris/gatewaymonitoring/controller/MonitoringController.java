@@ -3,7 +3,6 @@ package com.amaris.gatewaymonitoring.controller;
 import com.amaris.gatewaymonitoring.service.AggregatorMonitoringService;
 //import com.amaris.gatewaymonitoring.service.MqttMonitoringService;
 import com.amaris.gatewaymonitoring.service.SshMonitoringService;
-import jakarta.servlet.http.HttpSession;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -74,7 +73,7 @@ public class MonitoringController {
      */
     @GetMapping("/monitoring/gateway/stop/{id}")
     public ResponseEntity<String> stopMonitoring(@PathVariable String id, @RequestParam String threadId) {
-        sshMonitoringService.stopSshMonitoring(id, threadId);
+        sshMonitoringService.stopSshMonitoring(threadId);
         return ResponseEntity.ok("Monitoring stopped for gateway with ID: " + id);
     }
 

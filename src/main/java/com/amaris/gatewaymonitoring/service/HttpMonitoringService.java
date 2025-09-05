@@ -36,9 +36,14 @@ public class HttpMonitoringService {
             }
             devicesJson += ",";
         }
-        String indentedGateway = gatewayJson;
+        if (gatewayJson.startsWith("{") && gatewayJson.endsWith("}")) {
+            gatewayJson = gatewayJson.substring(1, gatewayJson.length() - 1);
+            if (gatewayJson.endsWith("\n")) {
+                gatewayJson = gatewayJson.substring(0, gatewayJson.length() - 1);
+            }
+        }
 
-        return "{\n" + devicesJson + "\n\t" + indentedGateway + "\n}";
+        return "{\n" + devicesJson + "\n\t" + gatewayJson + "\n}";
     }
 
 }

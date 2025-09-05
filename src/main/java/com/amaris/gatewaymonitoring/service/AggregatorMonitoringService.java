@@ -1,6 +1,5 @@
 package com.amaris.gatewaymonitoring.service;
 
-import jakarta.servlet.http.HttpSession;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -11,18 +10,18 @@ public class AggregatorMonitoringService {
 
     private final SshMonitoringService sshMonitoringService;
     private final HttpMonitoringService httpMonitoringService;
-    private final MqttMonitoringService mqttMonitoringService;
+//    private final MqttMonitoringService mqttMonitoringService;
     private final DatabaseMonitoringService databaseMonitoringService;
 
     @Autowired
     public AggregatorMonitoringService(
             SshMonitoringService sshMonitoringService,
             HttpMonitoringService httpMonitoringService,
-            MqttMonitoringService mqttMonitoringService,
+//            MqttMonitoringService mqttMonitoringService,
             DatabaseMonitoringService databaseMonitoringService) {
         this.sshMonitoringService = sshMonitoringService;
         this.httpMonitoringService = httpMonitoringService;
-        this.mqttMonitoringService = mqttMonitoringService;
+//        this.mqttMonitoringService = mqttMonitoringService;
         this.databaseMonitoringService = databaseMonitoringService;
     }
 
@@ -39,13 +38,13 @@ public class AggregatorMonitoringService {
 //        mqttMonitoringService.startMqttMonitoring("eu1.cloud.thethings.network", onJsonReceived);
 
 //        String gateway_id = "rpi-mantu"; // "leva-rpi-mantu";
-//        String lorawanJson = httpMonitoringService.getLorawanData(gateway_id); // remplacer ensuite par gatewayID
+//        String lorawanJson = httpMonitoringService.getLorawanData(gateway_id);
         String lorawanJson = httpMonitoringService.getLorawanData(gatewayID);
 
 //        String databaseJson = databaseMonitoringService.getGatewayLocationData(gateway_id);
         String databaseJson = databaseMonitoringService.getGatewayLocationData(gatewayID);
 
-        sshMonitoringService.startSshMonitoring(gatewayID, gatewayIP, threadId, raspberryJson -> {
+        sshMonitoringService.startSshMonitoring(gatewayIP, threadId, raspberryJson -> {
             String aggregatedJson = mergeJson(raspberryJson, lorawanJson, databaseJson);
             onJsonReceived.accept(aggregatedJson);
         });

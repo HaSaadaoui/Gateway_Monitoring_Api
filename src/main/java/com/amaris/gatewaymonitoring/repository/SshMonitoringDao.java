@@ -17,12 +17,6 @@ import java.util.function.Consumer;
 @Repository
 public class SshMonitoringDao {
 
-//    @Value("${mqtt.username}")
-//    private String username;
-//
-//    @Value("${mqtt.password}")
-//    private String password;
-
     @Value("${ssh.username}")
     private String username;
 
@@ -31,7 +25,7 @@ public class SshMonitoringDao {
 
     private final Map<String, Thread> monitoringThreads = new ConcurrentHashMap<>();
 
-    private final String SCRIPT_SHELL = "while true; do " +
+    private static final String SCRIPT_SHELL = "while true; do " +
         "status=$(systemctl is-active ttn-gateway); " +
         "echo \"$(date -u +%Y-%m-%dT%H:%M:%SZ) " +
         "$(hostname) " +
@@ -46,11 +40,11 @@ public class SshMonitoringDao {
         "sleep 10; " +
         "done";
 
-    public void startSshListening(String gatewayID, String gatewayIP, String threadId, Consumer<String> onJsonReceived) {
+    public void startSshListening(String gatewayIP, String threadId, Consumer<String> onJsonReceived) {
         Thread monitoringThread = new Thread(() -> {
             SshClient client = SshClient.setUpDefaultClient();
             client.start();
-//            String ipPublicTest = "10.243.129.10"; // A REMPLACER PAR gatewayIP
+//            String ipPublicTest = "10.243.129.10";
 
 //            try (ClientSession session = client.connect(username, ipPublicTest, 22).verify(10000).getSession()) {
             try (ClientSession session = client.connect(username, gatewayIP, 22).verify(10000).getSession()) {
@@ -71,7 +65,6 @@ public class SshMonitoringDao {
                             }
                             String json = buildJson(line);
                             onJsonReceived.accept(json);
-                            // System.out.println(json);
                         }
                     } catch (InterruptedIOException e) {}
                 }

@@ -1,5 +1,7 @@
 package com.amaris.gatewaymonitoring.repository;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
@@ -15,14 +17,8 @@ public class HttpMonitoringDao {
     @Value("${lorawan.baseurl}")
     private String lorawanBaseUrl;
 
-//    @Value("${lorawan.token}")
-//    private String lorawanToken;
-
     @Value("${lorawan.application.baseurl}")
     private String lorawanApplicationBaseUrl;
-
-//    @Value("${lorawan.token.reseau-lorawan}")
-//    private String lorawanApplicationToken;
 
     @Value("${lorawan.service.token}")
     private String lorawanServiceToken;
@@ -37,9 +33,6 @@ public class HttpMonitoringDao {
     public String fetchGatewayData(String gatewayID) {
 
         String gatewayInfos = "";
-        String createdAt = "";
-//        boolean statut = false;
-//        String timeOfStatut = "";
         HttpClient httpClient = HttpClient.create()
                 .responseTimeout(Duration.ofSeconds(5));
 
@@ -51,18 +44,15 @@ public class HttpMonitoringDao {
                     .build();
 
             gatewayInfos = client.get()
-                    .uri(gatewayID) //  + "/events/up")
+                    .uri(gatewayID + "?field_mask=antennas")
                     .retrieve()
                     .bodyToMono(String.class)
                     .block();
-            if (gatewayInfos != null && !gatewayInfos.equals("")) {
-                createdAt = extractCreatedAtValue(gatewayInfos);
-//                statut = isGatewayOn(gatewayInfos);
-//                timeOfStatut = extractTimeValue(gatewayInfos);
-            }
-        } catch (Exception e) { return ""; }
 
-        return buildLorawanJson(createdAt);
+            if (gatewayInfos != null && !gatewayInfos.equals("")) {
+                return extractCreatedAtAndLocation(gatewayInfos);
+            } else return "{}";
+        } catch (Exception e) { return "{}"; }
     }
 
     public String fetchDevices(String gatewayID) {
@@ -74,7 +64,6 @@ public class HttpMonitoringDao {
             WebClient client = webClientBuilder
                     .clientConnector(new ReactorClientHttpConnector(httpClient))
                     .baseUrl(lorawanApplicationBaseUrl)
-//                    .defaultHeader("Authorization", "Bearer " + lorawanApplicationToken)
                     .defaultHeader("Authorization", "Bearer " + lorawanServiceToken)
                     .build();
 
@@ -86,69 +75,50 @@ public class HttpMonitoringDao {
                     .block();
 
             return cleanDevicesJson(devices);
-//            return devices != null ? devices : "";
         } catch (Exception e) {
-            return "";
+            return "{}";
         }
     }
 
     /**
-     * Extrait dynamiquement la valeur du champ "created_at" à partir d'une chaîne de caractères
-     * représentant une réponse HTTP brute au format JSON.
+     * Extrait la date de création et la localisation (latitude, longitude, altitude, source)
+     * depuis une chaîne JSON décrivant un gateway, et retourne un sous-JSON formaté.
      *
-     * @param json la réponse HTTP brute sous forme de chaîne
-     * @return la valeur du champ "created_at" si trouvée, sinon une chaîne vide
+     * @param gatewayInfos JSON brut contenant les informations du gateway
+     * @return JSON contenant uniquement "created_at" et "location", ou "{}" en cas d'erreur
      */
-    public String extractCreatedAtValue(String json) {
-        String startTag = "created_at\":\"";
-        int startIndex = json.indexOf(startTag);
-        if (startIndex == -1) return "";
+    private String extractCreatedAtAndLocation(String gatewayInfos) {
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode root = mapper.readTree(gatewayInfos);
 
-        startIndex += startTag.length();
-        int endIndex = json.indexOf("\"", startIndex);
-        if (endIndex == -1) return "";
+            String createdAt = root.path("created_at").asText("");
 
-        return json.substring(startIndex, endIndex);
-    }
+            JsonNode loc = root.path("antennas").isArray() && !root.path("antennas").isEmpty()
+                    ? root.path("antennas").get(0).path("location")
+                    : mapper.createObjectNode();
 
-    public boolean isGatewayOn(String json) {
-        String startTag = "\"name\":\"";
-        int startIndex = json.indexOf(startTag);
-        if (startIndex == -1) return false;
+            double lat = loc.path("latitude").asDouble();
+            double lon = loc.path("longitude").asDouble();
+            int alt = loc.path("altitude").asInt();
+            String source = loc.path("source").asText("");
+            String safeSource = source.replace("\\", "\\\\").replace("\"", "\\\"");
 
-        startIndex += startTag.length();
-        int endIndex = json.indexOf("\"", startIndex);
-        if (endIndex == -1) return false;
+            return "{" +
+                    "\"gateway_info\": {\n" +
+                    "\t\t\"created_at\": \"" + createdAt + "\",\n" +
+                    "\t\t\"location\": {\n" +
+                    "\t\t\t\"latitude\": " + lat + ",\n" +
+                    "\t\t\t\"longitude\": " + lon + ",\n" +
+                    "\t\t\t\"altitude\": " + alt + ",\n" +
+                    "\t\t\t\"source\": \"" + safeSource + "\"\n" +
+                    "\t\t}\n" +
+                    "\t}\n" +
+                    "}";
 
-        String nameValue = json.substring(startIndex, endIndex);
-        return nameValue.endsWith("receive");
-    }
-
-    public String extractTimeValue(String json) {
-        String startTag = "\"time\":\"";
-        int startIndex = json.indexOf(startTag);
-        if (startIndex == -1) return "";
-
-        startIndex += startTag.length();
-        int endIndex = json.indexOf("\"", startIndex);
-        if (endIndex == -1) return "";
-
-        return json.substring(startIndex, endIndex);
-    }
-
-    /**
-     * Construit une chaîne JSON partielle sans accolades externes,
-     * contenant la date de création dans la structure TTN.
-     *
-     * @param createdAt la date de création au format ISO 8601
-     * @return une chaîne JSON partielle avec la date dans "ttn": {"info": {"created_at": ...}}
-     */
-    public String buildLorawanJson(String createdAt) {
-        return "\"ttn\": {\n" +
-                "  \t\t\"info\": {\n" +
-                "    \t\t\t\"created_at\": \"" + createdAt + "\"\n" +
-                "  \t\t}\n" +
-                "\t}";
+        } catch (Exception e) {
+            return "{}";
+        }
     }
 
     /**
@@ -159,7 +129,7 @@ public class HttpMonitoringDao {
      * @return JSON propre avec seulement "device_id" et "application_id"
      */
     public String cleanDevicesJson(String devicesjson) {
-        if (devicesjson == null || devicesjson.isEmpty()) return "";
+        if (devicesjson == null || devicesjson.isEmpty()) return "{}";
 
         StringBuilder result = new StringBuilder();
         result.append("{\n\t\"devices\":[\n");
