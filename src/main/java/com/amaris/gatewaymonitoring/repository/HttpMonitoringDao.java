@@ -23,6 +23,13 @@ public class HttpMonitoringDao {
     @Value("${lorawan.service.token}")
     private String lorawanServiceToken;
 
+    /**
+     * Métadonnées spécifique car l'id de l'Application ne respect pas
+     * la norme <gatewayId>-application
+     */
+    private static final String LEVA_RPI_MANTU = "leva-rpi-mantu";
+    private static final String LORAWAN_NETWORK_MANTU = "lorawan-network-mantu";
+
     private final WebClient.Builder webClientBuilder;
 
     @Autowired
@@ -67,12 +74,19 @@ public class HttpMonitoringDao {
                     .defaultHeader("Authorization", "Bearer " + lorawanServiceToken)
                     .build();
 
-            devices = client.get()
-                    .uri(gatewayID + "-app" + "/devices")
-//                    .uri("reseau-lorawan" + "/devices") // A SUPPRIMER
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .block();
+            if (gatewayID.equals(LEVA_RPI_MANTU)) {
+                devices = client.get()
+                        .uri(LORAWAN_NETWORK_MANTU + "/devices")
+                        .retrieve()
+                        .bodyToMono(String.class)
+                        .block();
+            } else {
+                devices = client.get()
+                    .uri(gatewayID + "-application" + "/devices")
+                        .retrieve()
+                        .bodyToMono(String.class)
+                        .block();
+            }
 
             return cleanDevicesJson(devices);
         } catch (Exception e) {
