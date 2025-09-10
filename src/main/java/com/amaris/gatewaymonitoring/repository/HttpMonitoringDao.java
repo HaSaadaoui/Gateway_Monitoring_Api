@@ -82,7 +82,7 @@ public class HttpMonitoringDao {
                         .block();
             } else {
                 devices = client.get()
-                    .uri(gatewayID + "-application" + "/devices")
+                    .uri(gatewayID + "-appli" + "/devices")
                         .retrieve()
                         .bodyToMono(String.class)
                         .block();
