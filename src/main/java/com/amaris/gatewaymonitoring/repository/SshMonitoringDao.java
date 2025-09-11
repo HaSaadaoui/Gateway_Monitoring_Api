@@ -43,6 +43,7 @@ public class SshMonitoringDao {
     public void startSshListening(String gatewayIP, String threadId, Consumer<String> onJsonReceived) {
         Thread monitoringThread = new Thread(() -> {
             SshClient client = SshClient.setUpDefaultClient();
+            client.setServerKeyVerifier((sshClientSession, remoteAddress, serverKey) -> true); // A SUPPRIMER
             client.start();
 //            String ipPublicTest = "10.243.129.10";
 
