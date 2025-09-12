@@ -20,6 +20,11 @@ jobs:
       - name: Build project
         run: ./mvnw clean package -DskipTests
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+        with:
+          platforms: all
+
       - name: Build and tag Docker image
         run: |
           docker build --platform linux/arm64 --no-cache -t localhost:5000/app-monitoring:latest .
