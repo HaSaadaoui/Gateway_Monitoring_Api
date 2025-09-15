@@ -20,21 +20,9 @@ jobs:
       - name: Build project
         run: ./mvnw clean package -DskipTests
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
-        with:
-          platforms: linux/arm64
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
       - name: Build and tag Docker image
         run: |
-          docker buildx build --platform linux/arm64 -t localhost:5000/app-monitoring:latest --load .
-
-      #- name: Build and tag Docker image
-        #run: |
-          #docker build --platform linux/arm64 --no-cache -t localhost:5000/app-monitoring:latest .
+          docker build --platform linux/arm64 --no-cache -t localhost:5000/app-monitoring:latest .
 
       - name: Install OpenVPN 2.5.7
         run: |

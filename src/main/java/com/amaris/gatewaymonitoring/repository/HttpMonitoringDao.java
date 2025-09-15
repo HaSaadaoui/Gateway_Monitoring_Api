@@ -29,6 +29,7 @@ public class HttpMonitoringDao {
      */
     private static final String LEVA_RPI_MANTU = "leva-rpi-mantu";
     private static final String LORAWAN_NETWORK_MANTU = "lorawan-network-mantu";
+    private static final String NUMBER_OF_DEVICES = "?limit=200";
 
     private final WebClient.Builder webClientBuilder;
 
@@ -76,13 +77,13 @@ public class HttpMonitoringDao {
 
             if (gatewayID.equals(LEVA_RPI_MANTU)) {
                 devices = client.get()
-                        .uri(LORAWAN_NETWORK_MANTU + "/devices")
+                        .uri(LORAWAN_NETWORK_MANTU + "/devices" + NUMBER_OF_DEVICES)
                         .retrieve()
                         .bodyToMono(String.class)
                         .block();
             } else {
                 devices = client.get()
-                    .uri(gatewayID + "-appli" + "/devices")
+                    .uri(gatewayID + "-appli" + "/devices" + NUMBER_OF_DEVICES)
                         .retrieve()
                         .bodyToMono(String.class)
                         .block();

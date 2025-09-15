@@ -45,9 +45,7 @@ public class SshMonitoringDao {
             SshClient client = SshClient.setUpDefaultClient();
             client.setServerKeyVerifier((sshClientSession, remoteAddress, serverKey) -> true); // A SUPPRIMER
             client.start();
-//            String ipPublicTest = "10.243.129.10";
 
-//            try (ClientSession session = client.connect(username, ipPublicTest, 22).verify(10000).getSession()) {
             try (ClientSession session = client.connect(username, gatewayIP, 22).verify(10000).getSession()) {
                 session.addPasswordIdentity(password);
                 session.auth().verify(5000);

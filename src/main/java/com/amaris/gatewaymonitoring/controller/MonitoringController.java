@@ -1,7 +1,6 @@
 package com.amaris.gatewaymonitoring.controller;
 
 import com.amaris.gatewaymonitoring.service.AggregatorMonitoringService;
-//import com.amaris.gatewaymonitoring.service.MqttMonitoringService;
 import com.amaris.gatewaymonitoring.service.SshMonitoringService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
@@ -13,36 +12,17 @@ import reactor.core.publisher.Flux;
 @RequestMapping("/api")
 public class MonitoringController {
 
-//    private final MqttMonitoringService mqttMonitoringService;
     private final SshMonitoringService sshMonitoringService;
     private final AggregatorMonitoringService aggregatorMonitoringService;
 
     @Autowired
     public MonitoringController(
-//            MqttMonitoringService mqttMonitoringService,
             SshMonitoringService sshMonitoringService,
             AggregatorMonitoringService aggregatorMonitoringService
             ) {
-//        this.mqttMonitoringService = mqttMonitoringService;
         this.sshMonitoringService = sshMonitoringService;
         this.aggregatorMonitoringService = aggregatorMonitoringService;
     }
-
-//    /**
-//     * Stream en temps réel les informations du broker MQTT
-//     * sur le Raspberry Pi
-//     *
-//     * @param id adresse IP de la passerelle cible
-//     * @return un flux SSE contenant les données système au format JSON
-//     */
-//    @GetMapping(value="/monitoring/sensor/{id}", produces=MediaType.TEXT_EVENT_STREAM_VALUE)
-//    public Flux<String> streamSensorData(@PathVariable String id) {
-//        return Flux.create(sink -> {
-//            mqttMonitoringService.startMqttMonitoring(id, json -> {
-//                sink.next(json);
-//            });
-//        });
-//    }
 
     /**
      * Diffuse en temps réel les informations système (CPU, RAM, etc.) d'une passerelle (Raspberry Pi)

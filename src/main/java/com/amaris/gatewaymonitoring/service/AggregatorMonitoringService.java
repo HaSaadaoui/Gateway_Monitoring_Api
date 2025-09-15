@@ -10,14 +10,12 @@ public class AggregatorMonitoringService {
 
     private final SshMonitoringService sshMonitoringService;
     private final HttpMonitoringService httpMonitoringService;
-//    private final MqttMonitoringService mqttMonitoringService;
     private final DatabaseMonitoringService databaseMonitoringService;
 
     @Autowired
     public AggregatorMonitoringService(
             SshMonitoringService sshMonitoringService,
             HttpMonitoringService httpMonitoringService,
-//            MqttMonitoringService mqttMonitoringService,
             DatabaseMonitoringService databaseMonitoringService) {
         this.sshMonitoringService = sshMonitoringService;
         this.httpMonitoringService = httpMonitoringService;
@@ -35,15 +33,8 @@ public class AggregatorMonitoringService {
      * @param onJsonReceived fonction consommateur qui reçoit les données JSON agrégées
      */
     public void aggregateRaspberryLorawanMonitoring(String gatewayID, String gatewayIP, String threadId, Consumer<String> onJsonReceived) {
-//        mqttMonitoringService.startMqttMonitoring("eu1.cloud.thethings.network", onJsonReceived);
-
-//        String gateway_id = "rpi-mantu"; // "leva-rpi-mantu";
-//        String lorawanJson = httpMonitoringService.getLorawanData(gateway_id);
         String lorawanJson = httpMonitoringService.getLorawanData(gatewayID);
-
-//        String databaseJson = databaseMonitoringService.getGatewayLocationData(gateway_id);
         String databaseJson = databaseMonitoringService.getGatewayLocationData(gatewayID);
-
         sshMonitoringService.startSshMonitoring(gatewayIP, threadId, raspberryJson -> {
             String aggregatedJson = mergeJson(raspberryJson, lorawanJson, databaseJson);
             onJsonReceived.accept(aggregatedJson);
