@@ -9,7 +9,7 @@ FROM arm64v8/openjdk:17-jdk-slim-bullseye
 ### Définir le répertoire de travail ###
 WORKDIR /opt/app
 
-# Installer SSH, ping, curl, etc...
+### Installer SSH, ping, curl, etc...
 #RUN apt-get update && apt-get install -y \
 #    openssh-client \
 #    iputils-ping \
