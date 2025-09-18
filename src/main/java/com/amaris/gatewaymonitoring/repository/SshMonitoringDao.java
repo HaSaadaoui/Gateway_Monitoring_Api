@@ -26,7 +26,7 @@ public class SshMonitoringDao {
     private final Map<String, Thread> monitoringThreads = new ConcurrentHashMap<>();
 
     private static final String SCRIPT_SHELL = "while true; do " +
-        "status=$(systemctl is-active ttn-gateway); " +
+        "status=$(systemctl is-active lora.service); " +
         "echo \"$(date -u +%Y-%m-%dT%H:%M:%SZ) " +
         "$(hostname) " +
         "$(hostname -I | awk '{print $1}') " +
