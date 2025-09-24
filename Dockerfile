@@ -10,14 +10,14 @@ FROM openjdk:17-jdk-slim-bullseye
 WORKDIR /opt/app
 
 ### Installer SSH, ping, curl, etc...
-RUN apt-get update && apt-get install -y \
-    openssh-client \
-    iputils-ping \
-    curl \
-    procps \
-    gawk \
-    coreutils \
-    && rm -rf /var/lib/apt/lists/*
+#RUN apt-get update && apt-get install -y \
+#    openssh-client \
+#    iputils-ping \
+#    curl \
+#    procps \
+#    gawk \
+#    coreutils \
+#    && rm -rf /var/lib/apt/lists/*
 
 ### Copier le fichier JAR dans le conteneur ###
 COPY target/gateway-monitoring-api-0.0.1-SNAPSHOT.jar /gateway-monitoring.jar
