@@ -60,14 +60,20 @@ public class HttpMonitoringDao {
      */
     public String fetchDevices(String applicationId) {
         try {
+            System.out.println("🔍 Fetching devices for application: " + applicationId);
             String response = buildClient().get()
                     .uri("/applications/" + applicationId + "/devices" + NUMBER_OF_DEVICES)
                     .retrieve()
                     .bodyToMono(String.class)
                     .block();
 
-            return (response != null) ? cleanDevicesJson(response) : "{}";
+            System.out.println("📥 Raw API response: " + (response != null ? response.substring(0, Math.min(200, response.length())) + "..." : "null"));
+            String cleaned = (response != null) ? cleanDevicesJson(response) : "{}";
+            System.out.println("✅ Cleaned devices JSON: " + cleaned);
+            return cleaned;
         } catch (Exception e) {
+            System.err.println("❌ Error fetching devices: " + e.getMessage());
+            e.printStackTrace();
             return "{}";
         }
     }
