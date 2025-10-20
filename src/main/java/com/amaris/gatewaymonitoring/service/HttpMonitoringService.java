@@ -26,24 +26,33 @@ public class HttpMonitoringService {
      * @return JSON fusionné
      */
     public String mergeLorawanJson(String devicesJson, String gatewayJson) {
-        devicesJson = devicesJson.trim();
-        gatewayJson = gatewayJson.trim();
+        devicesJson = (devicesJson != null) ? devicesJson.trim() : "{}";
+        gatewayJson = (gatewayJson != null) ? gatewayJson.trim() : "{}";
 
+        // Extraire le contenu entre accolades
         if (devicesJson.startsWith("{") && devicesJson.endsWith("}")) {
-            devicesJson = devicesJson.substring(1, devicesJson.length() - 1);
-            if (devicesJson.endsWith("\n")) {
-                devicesJson = devicesJson.substring(0, devicesJson.length() - 1);
-            }
-            devicesJson += ",";
+            devicesJson = devicesJson.substring(1, devicesJson.length() - 1).trim();
         }
         if (gatewayJson.startsWith("{") && gatewayJson.endsWith("}")) {
-            gatewayJson = gatewayJson.substring(1, gatewayJson.length() - 1);
-            if (gatewayJson.endsWith("\n")) {
-                gatewayJson = gatewayJson.substring(0, gatewayJson.length() - 1);
-            }
+            gatewayJson = gatewayJson.substring(1, gatewayJson.length() - 1).trim();
         }
 
-        return "{\n" + devicesJson + "\n\t" + gatewayJson + "\n}";
+        // Construire le JSON final
+        StringBuilder result = new StringBuilder("{\n");
+        
+        if (!devicesJson.isEmpty()) {
+            result.append(devicesJson);
+            if (!gatewayJson.isEmpty()) {
+                result.append(",\n\t");
+            }
+        }
+        
+        if (!gatewayJson.isEmpty()) {
+            result.append(gatewayJson);
+        }
+        
+        result.append("\n}");
+        return result.toString();
     }
 
 }
