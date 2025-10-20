@@ -59,19 +59,22 @@ public class AggregatorMonitoringService {
         }
 
         // Vérifier si lorawanJson est valide AVANT d'ajouter la virgule
-        boolean hasLorawanData = lorawanJson != null && !lorawanJson.isBlank() && !lorawanJson.equals("{}");
+        lorawanJson = (lorawanJson != null) ? lorawanJson.trim() : "{}";
+        boolean hasLorawanData = !lorawanJson.isEmpty() && !lorawanJson.equals("{}");
         
         if (hasLorawanData) {
-            lorawanJson = lorawanJson.trim();
             if (lorawanJson.startsWith("{") && lorawanJson.endsWith("}")) {
                 lorawanJson = lorawanJson.substring(1, lorawanJson.length() - 1).trim();
             }
-            return raspberryJson + ",\n\t" + lorawanJson
-                    + ",\n\t\"database\": {\n\t\t\"location\": \"" + databaseJson + "\"\n\t}\n}";
-        } else {
-            // Pas de données Lorawan, ne pas ajouter de virgule orpheline
-            return raspberryJson + ",\n\t\"database\": {\n\t\t\"location\": \"" + databaseJson + "\"\n\t}\n}";
+            // Vérifier à nouveau après extraction
+            if (!lorawanJson.isEmpty()) {
+                return raspberryJson + ",\n\t" + lorawanJson
+                        + ",\n\t\"database\": {\n\t\t\"location\": \"" + databaseJson + "\"\n\t}\n}";
+            }
         }
+        
+        // Pas de données Lorawan, ne pas ajouter de virgule orpheline
+        return raspberryJson + ",\n\t\"database\": {\n\t\t\"location\": \"" + databaseJson + "\"\n\t}\n}";
     }
 
 }
