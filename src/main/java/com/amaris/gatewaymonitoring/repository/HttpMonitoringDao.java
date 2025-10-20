@@ -61,7 +61,7 @@ public class HttpMonitoringDao {
     public String fetchDevices(String applicationId) {
         try {
             String response = buildClient().get()
-                    .uri(applicationId + "/devices" + NUMBER_OF_DEVICES)
+                    .uri("/applications/" + applicationId + "/devices" + NUMBER_OF_DEVICES)
                     .retrieve()
                     .bodyToMono(String.class)
                     .block();

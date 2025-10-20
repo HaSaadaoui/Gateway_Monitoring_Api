@@ -13,7 +13,10 @@ public class HttpMonitoringService {
     }
 
     public String getLorawanData(String gatewayId) {
-        String devicesJson = httpMonitoringDao.fetchDevices(gatewayId);
+        // Convertir gateway ID en application ID (ex: "rpi-mantu" -> "rpi-mantu-appl")
+        String applicationId = gatewayId + "-appl";
+        
+        String devicesJson = httpMonitoringDao.fetchDevices(applicationId);
         String dataGateway = httpMonitoringDao.fetchGatewayData(gatewayId);
         return mergeLorawanJson(devicesJson, dataGateway);
     }
