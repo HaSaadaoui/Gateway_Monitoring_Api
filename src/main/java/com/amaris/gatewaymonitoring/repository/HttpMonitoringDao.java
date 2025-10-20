@@ -109,30 +109,35 @@ public class HttpMonitoringDao {
     public String cleanDevicesJson(String devicesJson) {
         if (devicesJson == null || devicesJson.isEmpty()) return "{}";
 
-        StringBuilder result = new StringBuilder();
-        result.append("{\"devices\":[");
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode root = mapper.readTree(devicesJson);
+            JsonNode endDevices = root.path("end_devices");
 
-        int index = 0;
-        boolean first = true;
+            if (!endDevices.isArray() || endDevices.isEmpty()) {
+                return "{}";
+            }
 
-        while ((index = devicesJson.indexOf("\"device_id\":\"", index)) != -1) {
-            int startDevice = index + "\"device_id\":\"".length();
-            int endDevice = devicesJson.indexOf("\"", startDevice);
-            String deviceId = devicesJson.substring(startDevice, endDevice);
+            StringBuilder result = new StringBuilder();
+            result.append("{\"devices\":[");
 
-            int appIndex = devicesJson.indexOf("\"application_id\":\"", endDevice);
-            int startApp = appIndex + "\"application_id\":\"".length();
-            int endApp = devicesJson.indexOf("\"", startApp);
-            String appId = devicesJson.substring(startApp, endApp);
+            boolean first = true;
+            for (JsonNode device : endDevices) {
+                String deviceId = device.path("ids").path("device_id").asText("");
+                String appId = device.path("ids").path("application_ids").path("application_id").asText("");
 
-            if (!first) result.append(",");
-            result.append("{\"device_id\":\"").append(deviceId).append("\",\"application_id\":\"").append(appId).append("\"}");
-            first = false;
+                if (!deviceId.isEmpty() && !appId.isEmpty()) {
+                    if (!first) result.append(",");
+                    result.append("{\"device_id\":\"").append(deviceId)
+                          .append("\",\"application_id\":\"").append(appId).append("\"}");
+                    first = false;
+                }
+            }
 
-            index = endApp;
+            result.append("]}");
+            return result.toString();
+        } catch (Exception e) {
+            return "{}";
         }
-
-        result.append("]}");
-        return result.toString();
     }
 }
