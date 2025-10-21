@@ -13,12 +13,33 @@ public class HttpMonitoringService {
     }
 
     public String getLorawanData(String gatewayId) {
-        // Convertir gateway ID en application ID (ex: "rpi-mantu" -> "rpi-mantu-appli")
-        String applicationId = gatewayId + "-appli";
+        // Mapper les gateways aux applications TTN
+        String applicationId = getApplicationIdForGateway(gatewayId);
         
         String devicesJson = httpMonitoringDao.fetchDevices(applicationId);
         String dataGateway = httpMonitoringDao.fetchGatewayData(gatewayId);
         return mergeLorawanJson(devicesJson, dataGateway);
+    }
+    
+    /**
+     * Retourne l'Application ID TTN associée à une gateway.
+     * Mapping explicite basé sur les applications TTN existantes.
+     */
+    private String getApplicationIdForGateway(String gatewayId) {
+        switch (gatewayId) {
+            case "rpi-mantu":
+                // Châteaudun-Mantu-Building (3 devices)
+                return "rpi-mantu-appli";
+            case "leva-rpi-mantu":
+                // Levallois-Mantu-Building (114 devices)
+                return "lorawan-network-mantu";
+            case "lil-rpi-mantu":
+                // Lille-Mantu-Building (0 devices)
+                return "lil-rpi-mantu-appli";
+            default:
+                // Par défaut, ajouter "-appli" au gateway ID
+                return gatewayId + "-appli";
+        }
     }
 
     /**
