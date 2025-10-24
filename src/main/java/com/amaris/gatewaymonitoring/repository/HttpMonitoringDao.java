@@ -52,7 +52,8 @@ public class HttpMonitoringDao {
                     .build();
 
             gatewayInfos = client.get()
-                    .uri(gatewayID + "?field_mask=antennas")
+//                    .uri(gatewayID + "?field_mask=antennas")
+                    .uri(gatewayID + "?field_mask=ids,name,antennas")
                     .retrieve()
                     .bodyToMono(String.class)
                     .block();
@@ -108,6 +109,7 @@ public class HttpMonitoringDao {
             JsonNode root = mapper.readTree(gatewayInfos);
 
             String createdAt = root.path("created_at").asText("");
+            String name = root.path("name").asText("");
 
             JsonNode loc = root.path("antennas").isArray() && !root.path("antennas").isEmpty()
                     ? root.path("antennas").get(0).path("location")
@@ -121,6 +123,7 @@ public class HttpMonitoringDao {
 
             return "{" +
                     "\"gateway_info\": {\n" +
+                    "\t\"name\": \"" + name + "\",\n" +
                     "\t\t\"created_at\": \"" + createdAt + "\",\n" +
                     "\t\t\"location\": {\n" +
                     "\t\t\t\"latitude\": " + lat + ",\n" +

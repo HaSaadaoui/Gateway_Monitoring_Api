@@ -26,14 +26,14 @@ public class SshMonitoringDao {
     private final Map<String, Thread> monitoringThreads = new ConcurrentHashMap<>();
 
     private static final String SCRIPT_SHELL = "while true; do " +
-        "status=$(systemctl is-active ttn-gateway); " +
+        "status=$(systemctl is-active lora.service); " +
         "echo \"$(date -u +%Y-%m-%dT%H:%M:%SZ) " +
         "$(hostname) " +
         "$(hostname -I | awk '{print $1}') " +
         "$(curl -s https://api.ipify.org) " +
         "$(top -bn1 | grep \"Cpu(s)\" | awk '{print 100 - $8}') " +
         "$(awk '{print $1/1000}' /sys/class/thermal/thermal_zone0/temp) " +
-        "$(free -g | awk '/Mem:/ {print $2, $3}') " +
+        "$(free | awk '/Mem:/ {printf \"%.2f %.2f\", $2/1024/1024, $3/1024/1024}') " +
         "$(df -h / | awk 'NR==2 {print $2, $3, $4, $5}') " +
         "$(uptime_seconds=$(cut -d. -f1 /proc/uptime); echo \"$(( uptime_seconds / 86400 )) days $(( (uptime_seconds % 86400) / 3600 )) hours\") " +
         "$status\"; " +
