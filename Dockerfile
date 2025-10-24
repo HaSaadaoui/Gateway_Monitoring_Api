@@ -2,10 +2,13 @@
 FROM openjdk:17-jdk-slim-bullseye
 
 ### Définir le répertoire de travail ###
-WORKDIR /opt/app
+WORKDIR /opt/gateway
 
-### Copier le fichier JAR dans le conteneur ###
-COPY target/gateway-monitoring-api-0.0.1-SNAPSHOT.jar /gateway-monitoring.jar
+# Copy source code
+COPY . .
+
+# Run Maven and skip tests
+RUN chmod +x mvnw && ./mvnw clean install -DskipTests
 
 ### Exposer le port de l'application (si nécessaire) ###
 EXPOSE 8081
