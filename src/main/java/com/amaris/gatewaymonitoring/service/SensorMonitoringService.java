@@ -50,15 +50,20 @@ public class SensorMonitoringService {
 
         Runnable pollingTask = () -> {
             try {
-                String url = UriComponentsBuilder
-                        .fromHttpUrl(ttnBaseUrl)
-                        .pathSegment("as", "applications", appId, "devices", deviceId, "packages", "storage", "uplink_message")
-                        .queryParam("limit", 1)
-                        .build()
-                        .toUriString();
-
+                UriComponentsBuilder urlBuilder;
+                if (deviceId.isBlank()) {
+                    urlBuilder = UriComponentsBuilder
+                            .fromHttpUrl(ttnBaseUrl)
+                            .pathSegment("as", "applications", appId, "packages", "storage", "uplink_message");
+                } else {
+                    urlBuilder = UriComponentsBuilder
+                            .fromHttpUrl(ttnBaseUrl)
+                            .pathSegment("as", "applications", appId, "devices", deviceId, "packages", "storage", "uplink_message")
+                            .queryParam("limit", 1);
+                }
+                        
                 String body = webClient.get()
-                        .uri(url)
+                        .uri(urlBuilder.build().toString())
                         .accept(MediaType.APPLICATION_JSON)
                         .header("Authorization", "Bearer " + ttnToken)
                         .retrieve()
@@ -70,8 +75,10 @@ public class SensorMonitoringService {
                         if (!line.isBlank()) callback.accept(line);
                     }
                 }
+                System.out.println("Polling success [" + appId + "/" + deviceId + "]");
             } catch (Exception e) {
                 System.err.println("Polling error [" + appId + "/" + deviceId + "]: " + e.getMessage());
+                stopTtnPolling(threadId);
             }
         };
 
