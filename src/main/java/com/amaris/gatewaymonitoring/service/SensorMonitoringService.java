@@ -50,20 +50,15 @@ public class SensorMonitoringService {
 
         Runnable pollingTask = () -> {
             try {
-                UriComponentsBuilder urlBuilder;
-                if (deviceId.isBlank()) {
-                    urlBuilder = UriComponentsBuilder
-                            .fromHttpUrl(ttnBaseUrl)
-                            .pathSegment("as", "applications", appId, "packages", "storage", "uplink_message");
-                } else {
-                    urlBuilder = UriComponentsBuilder
-                            .fromHttpUrl(ttnBaseUrl)
-                            .pathSegment("as", "applications", appId, "devices", deviceId, "packages", "storage", "uplink_message")
-                            .queryParam("limit", 1);
-                }
-                        
+                String url = UriComponentsBuilder
+                        .fromHttpUrl(ttnBaseUrl)
+                        .pathSegment("as", "applications", appId, "devices", deviceId, "packages", "storage", "uplink_message")
+                        .queryParam("limit", 1)
+                        .build()
+                        .toUriString();
+
                 String body = webClient.get()
-                        .uri(urlBuilder.build().toString())
+                        .uri(url)
                         .accept(MediaType.APPLICATION_JSON)
                         .header("Authorization", "Bearer " + ttnToken)
                         .retrieve()
@@ -75,7 +70,6 @@ public class SensorMonitoringService {
                         if (!line.isBlank()) callback.accept(line);
                     }
                 }
-                System.out.println("Polling success [" + appId + "/" + deviceId + "]");
             } catch (Exception e) {
                 System.err.println("Polling error [" + appId + "/" + deviceId + "]: " + e.getMessage());
                 stopTtnPolling(threadId);
@@ -88,7 +82,43 @@ public class SensorMonitoringService {
 
     /** Arrête le polling pour une tâche donnée. */
     public void stopTtnPolling(String threadId) {
+        System.out.println("Stopping monitoring for thread: " + threadId);
         ScheduledFuture<?> f = tasks.remove(threadId);
         if (f != null) f.cancel(true);
+    }
+
+    public void probeGatewayDevices(String appId, Consumer<String> callback) {
+        try {
+            UriComponentsBuilder urlBuilder = UriComponentsBuilder
+                .fromUriString(ttnBaseUrl)
+                .pathSegment("as", "applications", appId, "packages", "storage", "uplink_message")
+                .queryParam("limit", 1000);
+
+            webClient.get()
+                .uri(urlBuilder.build().toString())
+                .accept(MediaType.APPLICATION_JSON)
+                .header("Authorization", "Bearer " + ttnToken)
+                .retrieve()
+                .bodyToFlux(String.class)
+                .doOnError(thing -> System.out.printf("Error while probing gateway devices for " + appId + ": " + thing.getMessage() + "\n"))
+                .doOnComplete(() -> System.out.println("Completed gateway probing for " + appId))
+                .subscribe(body -> {
+                    if (body != null && !body.isBlank()) {
+                        for (String line : body.trim().split("\\r?\\n")) {
+                            if (!line.isBlank()) {
+                                callback.accept(line);
+                            }
+                        }
+                    } else {
+                        System.out.printf("Gateway %s: a line was empty\n", appId);
+                        callback.accept("{}");
+                    }
+                });
+
+
+            System.out.println("Gateway probing success for " + appId);
+        } catch (Exception e) {
+            System.err.println("Gateway probing error for " + appId + ": " + e.getMessage());
+        }
     }
 }
