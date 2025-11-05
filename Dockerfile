@@ -1,5 +1,6 @@
 ### jdk complet ###
-FROM openjdk:17-jdk-slim-bullseye
+FROM amazoncorretto:17-alpine
+
 
 ### Définir le répertoire de travail ###
 WORKDIR /opt/app
