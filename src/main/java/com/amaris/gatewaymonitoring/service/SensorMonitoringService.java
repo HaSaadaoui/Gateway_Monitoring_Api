@@ -6,6 +6,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import java.sql.Time;
+import java.time.Instant;
+import java.time.temporal.TemporalAmount;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -72,6 +75,7 @@ public class SensorMonitoringService {
                 }
             } catch (Exception e) {
                 System.err.println("Polling error [" + appId + "/" + deviceId + "]: " + e.getMessage());
+                stopTtnPolling(threadId);
             }
         };
 
@@ -81,7 +85,59 @@ public class SensorMonitoringService {
 
     /** Arrête le polling pour une tâche donnée. */
     public void stopTtnPolling(String threadId) {
+        System.out.println("Stopping monitoring for thread: " + threadId);
         ScheduledFuture<?> f = tasks.remove(threadId);
         if (f != null) f.cancel(true);
+    }
+
+    public void probeGatewayDevices(String appId, Consumer<String> callback) {
+        // We will get values 15 minutes before this instant
+        Instant currentInstant = Instant.now();
+        Instant after = currentInstant.minusSeconds(15 * 60);
+        String afterIsoTimestamp = after.toString();
+        
+        try {
+            UriComponentsBuilder urlBuilder = UriComponentsBuilder
+                .fromUriString(ttnBaseUrl)
+                .pathSegment("as", "applications", appId, "packages", "storage", "uplink_message")
+                .queryParam("limit", 200) // TODO: reset limit
+                .queryParam("after", afterIsoTimestamp)
+                .queryParam("order", "-received_at")
+            ;
+
+            var request = webClient.get()
+                    .uri(urlBuilder.build().toString())
+                    .accept(MediaType.APPLICATION_JSON)
+                    .header("Authorization", "Bearer " + ttnToken);
+
+            request.retrieve()
+                .bodyToFlux(String.class)
+                .doOnError(
+                    thing -> {
+                        System.out.printf("Error while probing gateway devices for " + appId + ": " + thing.getMessage() + "\n");
+                        callback.accept("");
+                    }
+                )
+                .doOnComplete(() -> {
+                    System.out.println("Completed gateway probing for " + appId);
+                    callback.accept("");
+                })
+                .subscribe(body -> {
+                    if (body != null && !body.isBlank()) {
+                        for (String line : body.trim().split("\\r?\\n")) {
+                            if (!line.isBlank()) {
+                                callback.accept(line);
+                            }
+                        }
+                    } else {
+                        System.out.printf("Gateway %s: a line was empty\n", appId);
+                    }
+                });
+
+            System.out.println("Gateway probing success for " + appId);
+            
+        } catch (Exception e) {
+            System.err.println("Gateway probing error for " + appId + ": " + e.getMessage());
+        }
     }
 }

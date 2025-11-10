@@ -29,6 +29,11 @@ public class SensorController {
         );
     }
 
+    @GetMapping(value = "/monitoring/sensor/{appId}", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<String> latestSensorsData(@PathVariable String appId) {
+        return Flux.create(sink -> aggregatorSensorService.aggregateGatewayDevices(appId, sink::next));
+    }
+
     /**
      * Arrête l'écoute d'un capteur TTN
      */

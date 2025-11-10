@@ -20,4 +20,8 @@ public class AggregatorSensorService {
     public void stopSensorMonitoring(String threadId) {
         sensorMonitoringService.stopTtnPolling(threadId);
     }
+
+    public void aggregateGatewayDevices(String appId, Consumer<String> callback) {
+        sensorMonitoringService.probeGatewayDevices(appId, callback);
+    }
 }
