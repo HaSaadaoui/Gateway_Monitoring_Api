@@ -39,10 +39,7 @@ public class SensorController {
         @PathVariable String appId,
         @RequestParam Optional<Instant> after
     ) {
-        Instant currentInstant = Instant.now();
-        Instant afterInstant = after.orElse(currentInstant.minusSeconds(15 * 60)); // Par defaut recupere les données des 15 dernières minutes
-
-        return Flux.create(sink -> aggregatorSensorService.aggregateGatewayDevices(appId, afterInstant, sink::next));
+        return Flux.create(sink -> aggregatorSensorService.aggregateGatewayDevices(appId, after, sink::next));
     }
 
     /**

@@ -10,6 +10,7 @@ import java.sql.Time;
 import java.time.Instant;
 import java.time.temporal.TemporalAmount;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -90,18 +91,21 @@ public class SensorMonitoringService {
         if (f != null) f.cancel(true);
     }
 
-    public void probeGatewayDevices(String appId, Instant after, Consumer<String> callback) {
-        String afterIsoTimestamp = after.toString();
+    public void probeGatewayDevices(String appId, Optional<Instant> after, Consumer<String> callback) {
         
         try {
             UriComponentsBuilder urlBuilder = UriComponentsBuilder
-                .fromUriString(ttnBaseUrl)
-                .pathSegment("as", "applications", appId, "packages", "storage", "uplink_message")
-                //.queryParam("limit", 200)
-                //.queryParam("after", afterIsoTimestamp)
-                .queryParam("order", "-received_at")
+            .fromUriString(ttnBaseUrl)
+            .pathSegment("as", "applications", appId, "packages", "storage", "uplink_message")
+            //.queryParam("limit", 200)
+            .queryParam("order", "-received_at")
             ;
-
+            
+            if (after.isPresent()) {
+                String afterIsoTimestamp = after.toString();
+                urlBuilder.queryParam("after", afterIsoTimestamp);
+            }
+                
             var request = webClient.get()
                     .uri(urlBuilder.build().toString())
                     .accept(MediaType.APPLICATION_JSON)
