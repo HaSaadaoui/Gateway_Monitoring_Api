@@ -97,12 +97,10 @@ public class SensorMonitoringService {
             UriComponentsBuilder urlBuilder = UriComponentsBuilder
             .fromUriString(ttnBaseUrl)
             .pathSegment("as", "applications", appId, "packages", "storage", "uplink_message")
-            //.queryParam("limit", 200)
-            .queryParam("order", "-received_at")
-            ;
+            .queryParam("order", "-received_at");
             
             if (after.isPresent()) {
-                String afterIsoTimestamp = after.toString();
+                String afterIsoTimestamp = after.get().toString();
                 urlBuilder.queryParam("after", afterIsoTimestamp);
             }
                 
