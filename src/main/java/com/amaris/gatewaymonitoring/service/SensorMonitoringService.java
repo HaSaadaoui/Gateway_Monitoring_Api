@@ -90,18 +90,15 @@ public class SensorMonitoringService {
         if (f != null) f.cancel(true);
     }
 
-    public void probeGatewayDevices(String appId, Consumer<String> callback) {
-        // We will get values 15 minutes before this instant
-        Instant currentInstant = Instant.now();
-        Instant after = currentInstant.minusSeconds(15 * 60);
+    public void probeGatewayDevices(String appId, Instant after, Consumer<String> callback) {
         String afterIsoTimestamp = after.toString();
         
         try {
             UriComponentsBuilder urlBuilder = UriComponentsBuilder
                 .fromUriString(ttnBaseUrl)
                 .pathSegment("as", "applications", appId, "packages", "storage", "uplink_message")
-                .queryParam("limit", 200) // TODO: reset limit
-                .queryParam("after", afterIsoTimestamp)
+                //.queryParam("limit", 200)
+                //.queryParam("after", afterIsoTimestamp)
                 .queryParam("order", "-received_at")
             ;
 

@@ -2,6 +2,7 @@ package com.amaris.gatewaymonitoring.service;
 
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.util.function.Consumer;
 
 @Service
@@ -21,7 +22,7 @@ public class AggregatorSensorService {
         sensorMonitoringService.stopTtnPolling(threadId);
     }
 
-    public void aggregateGatewayDevices(String appId, Consumer<String> callback) {
-        sensorMonitoringService.probeGatewayDevices(appId, callback);
+    public void aggregateGatewayDevices(String appId, Instant after, Consumer<String> callback) {
+        sensorMonitoringService.probeGatewayDevices(appId, after, callback);
     }
 }

@@ -1,6 +1,11 @@
 package com.amaris.gatewaymonitoring.controller;
 
 import com.amaris.gatewaymonitoring.service.AggregatorSensorService;
+
+import java.time.Instant;
+import java.util.Optional;
+
+import org.springframework.data.repository.query.Param;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -30,8 +35,14 @@ public class SensorController {
     }
 
     @GetMapping(value = "/monitoring/sensor/{appId}", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<String> latestSensorsData(@PathVariable String appId) {
-        return Flux.create(sink -> aggregatorSensorService.aggregateGatewayDevices(appId, sink::next));
+    public Flux<String> latestSensorsData(
+        @PathVariable String appId,
+        @RequestParam Optional<Instant> after
+    ) {
+        Instant currentInstant = Instant.now();
+        Instant afterInstant = after.orElse(currentInstant.minusSeconds(15 * 60)); // Par defaut recupere les données des 15 dernières minutes
+
+        return Flux.create(sink -> aggregatorSensorService.aggregateGatewayDevices(appId, afterInstant, sink::next));
     }
 
     /**
