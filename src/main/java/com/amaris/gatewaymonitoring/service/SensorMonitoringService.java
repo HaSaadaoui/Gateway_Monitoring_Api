@@ -9,6 +9,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 import java.sql.Time;
 import java.time.Instant;
 import java.time.temporal.TemporalAmount;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -17,6 +18,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+
+import javax.print.attribute.standard.Media;
 
 @Service
 public class SensorMonitoringService {
@@ -106,7 +109,7 @@ public class SensorMonitoringService {
                 
             var request = webClient.get()
                     .uri(urlBuilder.build().toString())
-                    .accept(MediaType.APPLICATION_JSON)
+                    .accept(MediaType.APPLICATION_NDJSON)
                     .header("Authorization", "Bearer " + ttnToken);
 
             request.retrieve()
