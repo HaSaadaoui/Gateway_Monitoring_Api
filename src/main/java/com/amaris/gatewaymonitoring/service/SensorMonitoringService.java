@@ -140,6 +140,7 @@ public class SensorMonitoringService {
             
         } catch (Exception e) {
             System.err.println("Gateway probing error for " + appId + ": " + e.getMessage());
+            callback.accept(""); // Close the connection on error
         }
     }
 }
