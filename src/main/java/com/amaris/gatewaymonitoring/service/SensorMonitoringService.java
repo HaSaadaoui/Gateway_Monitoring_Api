@@ -9,13 +9,17 @@ import org.springframework.web.util.UriComponentsBuilder;
 import java.sql.Time;
 import java.time.Instant;
 import java.time.temporal.TemporalAmount;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+
+import javax.print.attribute.standard.Media;
 
 @Service
 public class SensorMonitoringService {
@@ -90,24 +94,22 @@ public class SensorMonitoringService {
         if (f != null) f.cancel(true);
     }
 
-    public void probeGatewayDevices(String appId, Consumer<String> callback) {
-        // We will get values 15 minutes before this instant
-        Instant currentInstant = Instant.now();
-        Instant after = currentInstant.minusSeconds(15 * 60);
-        String afterIsoTimestamp = after.toString();
+    public void probeGatewayDevices(String appId, Optional<Instant> after, Consumer<String> callback) {
         
         try {
             UriComponentsBuilder urlBuilder = UriComponentsBuilder
-                .fromUriString(ttnBaseUrl)
-                .pathSegment("as", "applications", appId, "packages", "storage", "uplink_message")
-                .queryParam("limit", 200) // TODO: reset limit
-                .queryParam("after", afterIsoTimestamp)
-                .queryParam("order", "-received_at")
-            ;
-
+            .fromUriString(ttnBaseUrl)
+            .pathSegment("as", "applications", appId, "packages", "storage", "uplink_message")
+            .queryParam("order", "-received_at");
+            
+            if (after.isPresent()) {
+                String afterIsoTimestamp = after.get().toString();
+                urlBuilder.queryParam("after", afterIsoTimestamp);
+            }
+                
             var request = webClient.get()
                     .uri(urlBuilder.build().toString())
-                    .accept(MediaType.APPLICATION_JSON)
+                    .accept(MediaType.APPLICATION_NDJSON)
                     .header("Authorization", "Bearer " + ttnToken);
 
             request.retrieve()
@@ -138,6 +140,7 @@ public class SensorMonitoringService {
             
         } catch (Exception e) {
             System.err.println("Gateway probing error for " + appId + ": " + e.getMessage());
+            callback.accept(""); // Close the connection on error
         }
     }
 }
