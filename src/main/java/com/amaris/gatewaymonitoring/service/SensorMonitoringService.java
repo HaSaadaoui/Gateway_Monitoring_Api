@@ -61,6 +61,7 @@ public class SensorMonitoringService {
                         .fromHttpUrl(ttnBaseUrl)
                         .pathSegment("as", "applications", appId, "devices", deviceId, "packages", "storage", "uplink_message")
                         .queryParam("limit", 1)
+                        .queryParam("order", "-received_at")  // Trier par date décroissante (plus récent en premier)
                         .build()
                         .toUriString();
 
