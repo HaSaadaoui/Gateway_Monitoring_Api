@@ -1,3 +1,9 @@
+HELP.md
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
 # Compiled class file
 *.class
 
@@ -19,14 +25,10 @@
 *.tar.gz
 *.rar
 
-# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
+# virtual machine crash logs
 hs_err_pid*
 replay_pid*
 HELP.md
-target/
-!.mvn/wrapper/maven-wrapper.jar
-!**/src/main/**/target/
-!**/src/test/**/target/
 
 ### STS ###
 .apt_generated
@@ -57,3 +59,15 @@ build/
 .vscode/
 application.yml
 old.db
+
+### Documentation & Scripts (local only) ###
+docs/
+*.bat
+*.ps1
+*_IMPROVEMENTS.md
+*_GUIDE.md
+*_DOCUMENTATION.md
+*_QUICK_TEST.md
+*_NOW.md
+*_START.md
+README.md
