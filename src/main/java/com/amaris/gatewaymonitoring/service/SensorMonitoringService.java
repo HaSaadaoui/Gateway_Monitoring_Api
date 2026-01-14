@@ -1,36 +1,42 @@
 package com.amaris.gatewaymonitoring.service;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import org.springframework.web.util.UriComponentsBuilder;
 
-import java.sql.Time;
+import java.time.Duration;
 import java.time.Instant;
-import java.time.temporal.TemporalAmount;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
-
-import javax.print.attribute.standard.Media;
 
 @Service
 public class SensorMonitoringService {
 
     private final WebClient webClient;
-    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
+
+    // Idéalement: plus de threads si tu as beaucoup de capteurs.
+    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(4);
+
+    // threadId -> task handle
     private final Map<String, ScheduledFuture<?>> tasks = new ConcurrentHashMap<>();
 
-    private final String ttnBaseUrl;       // ex: https://eu1.cloud.thethings.network/api/v3
+    // threadId -> retry state
+    private final Map<String, AtomicInteger> retryCounters = new ConcurrentHashMap<>();
+
+    private final String ttnBaseUrl;
     private final String ttnToken;
     private final long pollIntervalSec;
+
+    // Backoff
+    private final long backoffBaseMs = 1_000;     // 1s
+    private final long backoffMaxMs  = 60_000;    // 60s
 
     public SensorMonitoringService(
             WebClient.Builder webClientBuilder,
@@ -46,102 +52,146 @@ public class SensorMonitoringService {
 
     /**
      * Démarre le polling pour une application et un device donnés.
-     *
-     * @param appId    ID de l'application TTN (ex: lorawan-network-mantu)
-     * @param deviceId ID du device TTN (ex: occup-vs70-03-04)
-     * @param threadId ID unique pour cette tâche de polling (permet l'arrêt)
-     * @param callback Callback appelé pour chaque message (ligne NDJSON)
+     * Important: threadId doit être unique par connexion SSE.
      */
     public void startTtnPolling(String appId, String deviceId, String threadId, Consumer<String> callback) {
+        // Idempotent: si déjà actif, ne pas doubler
         if (tasks.containsKey(threadId)) return;
 
+        retryCounters.putIfAbsent(threadId, new AtomicInteger(0));
+
         Runnable pollingTask = () -> {
+            // Si stop a été appelé entre-temps
+            if (!tasks.containsKey(threadId)) return;
+
             try {
                 String url = UriComponentsBuilder
                         .fromHttpUrl(ttnBaseUrl)
                         .pathSegment("as", "applications", appId, "devices", deviceId, "packages", "storage", "uplink_message")
                         .queryParam("limit", 1)
-                        .queryParam("order", "-received_at")  // Trier par date décroissante (plus récent en premier)
+                        .queryParam("order", "-received_at")
                         .build()
                         .toUriString();
 
+                // TTN storage -> NDJSON, même si limit=1
                 String body = webClient.get()
                         .uri(url)
-                        .accept(MediaType.APPLICATION_JSON)
+                        .accept(MediaType.APPLICATION_NDJSON)
                         .header("Authorization", "Bearer " + ttnToken)
                         .retrieve()
                         .bodyToMono(String.class)
-                        .block();
+                        .block(Duration.ofSeconds(15));
+
+                // Succès -> reset retry
+                retryCounters.get(threadId).set(0);
 
                 if (body != null && !body.isBlank()) {
                     for (String line : body.trim().split("\\r?\\n")) {
                         if (!line.isBlank()) callback.accept(line);
                     }
                 }
+
+            } catch (WebClientResponseException e) {
+                // 429 -> backoff et on continue (NE PAS stop)
+                if (e.getStatusCode() == HttpStatus.TOO_MANY_REQUESTS) {
+                    int n = retryCounters.get(threadId).incrementAndGet();
+                    long sleepMs = computeBackoffMs(n);
+                    System.err.printf("TTN 429 [%s/%s] thread=%s. Backoff %dms%n", appId, deviceId, threadId, sleepMs);
+                    sleepQuietly(sleepMs);
+                    return;
+                }
+
+                // 401/403 -> token/rights: là tu peux stop (ça ne se résoudra pas tout seul)
+                if (e.getStatusCode() == HttpStatus.UNAUTHORIZED || e.getStatusCode() == HttpStatus.FORBIDDEN) {
+                    System.err.printf("TTN auth error [%s/%s] thread=%s: %s. Stopping.%n", appId, deviceId, threadId, e.getMessage());
+                    stopTtnPolling(threadId);
+                    return;
+                }
+
+                // Autres erreurs HTTP: backoff léger
+                int n = retryCounters.get(threadId).incrementAndGet();
+                long sleepMs = Math.min(10_000, computeBackoffMs(n));
+                System.err.printf("TTN HTTP error [%s/%s] thread=%s: %s. Backoff %dms%n", appId, deviceId, threadId, e.getStatusCode(), sleepMs);
+                sleepQuietly(sleepMs);
+
             } catch (Exception e) {
-                System.err.println("Polling error [" + appId + "/" + deviceId + "]: " + e.getMessage());
-                stopTtnPolling(threadId);
+                // Exception réseau/timeout: backoff et continue
+                int n = retryCounters.get(threadId).incrementAndGet();
+                long sleepMs = Math.min(10_000, computeBackoffMs(n));
+                System.err.printf("Polling error [%s/%s] thread=%s: %s. Backoff %dms%n", appId, deviceId, threadId, e.getMessage(), sleepMs);
+                sleepQuietly(sleepMs);
             }
         };
 
-        ScheduledFuture<?> future = scheduler.scheduleAtFixedRate(pollingTask, 0, pollIntervalSec, TimeUnit.SECONDS);
+        // IMPORTANT: fixedDelay pour éviter overlap si TTN est lent
+        ScheduledFuture<?> future = scheduler.scheduleWithFixedDelay(
+                pollingTask,
+                0,
+                pollIntervalSec,
+                TimeUnit.SECONDS
+        );
+
         tasks.put(threadId, future);
     }
 
-    /** Arrête le polling pour une tâche donnée. */
+    /** Arrête le polling pour un threadId. Idempotent. */
     public void stopTtnPolling(String threadId) {
-        System.out.println("Stopping monitoring for thread: " + threadId);
         ScheduledFuture<?> f = tasks.remove(threadId);
-        if (f != null) f.cancel(true);
+        retryCounters.remove(threadId);
+
+        if (f != null) {
+            f.cancel(true);
+            System.out.println("Stopping monitoring for thread: " + threadId);
+        }
     }
 
     public void probeGatewayDevices(String appId, Optional<Instant> after, Consumer<String> callback) {
-        
         try {
             UriComponentsBuilder urlBuilder = UriComponentsBuilder
-            .fromUriString(ttnBaseUrl)
-            .pathSegment("as", "applications", appId, "packages", "storage", "uplink_message")
-            .queryParam("order", "-received_at");
-            
-            if (after.isPresent()) {
-                String afterIsoTimestamp = after.get().toString();
-                urlBuilder.queryParam("after", afterIsoTimestamp);
-            }
-                
-            var request = webClient.get()
+                    .fromUriString(ttnBaseUrl)
+                    .pathSegment("as", "applications", appId, "packages", "storage", "uplink_message")
+                    .queryParam("order", "-received_at");
+
+            after.ifPresent(instant -> urlBuilder.queryParam("after", instant.toString()));
+
+            webClient.get()
                     .uri(urlBuilder.build().toString())
                     .accept(MediaType.APPLICATION_NDJSON)
-                    .header("Authorization", "Bearer " + ttnToken);
-
-            request.retrieve()
-                .bodyToFlux(String.class)
-                .doOnError(
-                    thing -> {
-                        System.out.printf("Error while probing gateway devices for " + appId + ": " + thing.getMessage() + "\n");
-                        callback.accept("");
-                    }
-                )
-                .doOnComplete(() -> {
-                    System.out.println("Completed gateway probing for " + appId);
-                    callback.accept("");
-                })
-                .subscribe(body -> {
-                    if (body != null && !body.isBlank()) {
-                        for (String line : body.trim().split("\\r?\\n")) {
-                            if (!line.isBlank()) {
-                                callback.accept(line);
-                            }
+                    .header("Authorization", "Bearer " + ttnToken)
+                    .retrieve()
+                    .bodyToFlux(String.class)
+                    .doOnError(err -> {
+                        System.err.printf("Error while probing gateway devices for %s: %s%n", appId, err.getMessage());
+                        callback.accept(""); // signal “end”
+                    })
+                    .doOnComplete(() -> callback.accept(""))
+                    .subscribe(line -> {
+                        if (line != null && !line.isBlank()) {
+                            callback.accept(line);
                         }
-                    } else {
-                        System.out.printf("Gateway %s: a line was empty\n", appId);
-                    }
-                });
+                    });
 
-            System.out.println("Gateway probing success for " + appId);
-            
         } catch (Exception e) {
             System.err.println("Gateway probing error for " + appId + ": " + e.getMessage());
-            callback.accept(""); // Close the connection on error
+            callback.accept("");
+        }
+    }
+
+    private long computeBackoffMs(int attempt) {
+        // exp backoff: base * 2^(attempt-1)
+        long exp = backoffBaseMs * (1L << Math.min(10, Math.max(0, attempt - 1)));
+        long capped = Math.min(backoffMaxMs, exp);
+
+        // jitter 0.5x..1.0x
+        double jitter = 0.5 + ThreadLocalRandom.current().nextDouble() * 0.5;
+        return (long) (capped * jitter);
+    }
+
+    private void sleepQuietly(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
         }
     }
 }

@@ -1,11 +1,8 @@
 package com.amaris.gatewaymonitoring.controller;
 
 import com.amaris.gatewaymonitoring.service.AggregatorSensorService;
-
 import java.time.Instant;
 import java.util.Optional;
-
-import org.springframework.data.repository.query.Param;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -29,9 +26,24 @@ public class SensorController {
     public Flux<String> streamSensor(@PathVariable String appId,
                                      @PathVariable String deviceId,
                                      @RequestParam String threadId) {
-        return Flux.create(sink ->
-                aggregatorSensorService.aggregateSensorMonitoring(appId, deviceId, threadId, sink::next)
-        );
+
+        return Flux.create(sink -> {
+
+            aggregatorSensorService.aggregateSensorMonitoring(
+                    appId,
+                    deviceId,
+                    threadId,
+                    sink::next
+            );
+
+            sink.onCancel(() -> {
+                aggregatorSensorService.stopSensorMonitoring(threadId);
+            });
+
+            sink.onDispose(() -> {
+                aggregatorSensorService.stopSensorMonitoring(threadId);
+            });
+        });
     }
 
     @GetMapping(value = "/monitoring/sensor/{appId}", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -49,6 +61,6 @@ public class SensorController {
     public ResponseEntity<String> stopSensor(@PathVariable String deviceId,
                                              @RequestParam String threadId) {
         aggregatorSensorService.stopSensorMonitoring(threadId);
-        return ResponseEntity.ok("Monitoring stopped for sensor " + deviceId);
+        return ResponseEntity.ok("Monitoring stopped for thread " + threadId + " (device " + deviceId + ")");
     }
 }
