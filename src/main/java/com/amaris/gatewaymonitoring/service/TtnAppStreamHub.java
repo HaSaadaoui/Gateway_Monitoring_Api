@@ -13,12 +13,11 @@ import org.springframework.web.util.UriComponentsBuilder;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
+import reactor.util.retry.Retry;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -33,15 +32,24 @@ public class TtnAppStreamHub {
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(8);
     private final ConcurrentHashMap<String, AppStream> streams = new ConcurrentHashMap<>();
 
+    // ✅ verrou TTN par appId (évite snapshot+poll en parallèle => 429)
+    private final ConcurrentHashMap<String, Semaphore> appLocks = new ConcurrentHashMap<>();
+
     private final long backoffBaseMs = 1_000;
     private final long backoffMaxMs  = 60_000;
 
     private final long pollIntervalMs;
-    private final int pollLimit;
+    private final int pollLimit;                 // live app-level limit
+    private final int snapshotAppLimit;          // snapshot app-level limit (si deviceIds vide ou fallback)
     private final long initialLookbackSeconds;
 
-    // ✅ Limite de concurrence snapshot TTN (évite 429)
+    // ✅ snapshot “par device” : limite de concurrence + pacing
     private final int snapshotConcurrency;
+    private final long snapshotPaceMs;
+
+    // ✅ retry snapshot per-device
+    private final int snapshotRetries;
+    private final long snapshotTimeoutSeconds;
 
     private final ObjectMapper mapper = new ObjectMapper();
 
@@ -49,10 +57,14 @@ public class TtnAppStreamHub {
             WebClient.Builder webClientBuilder,
             @Value("${lorawan.baseurl}") String ttnBaseUrl,
             @Value("${lorawan.service.token}") String ttnToken,
-            @Value("${sensor.multi.poll-interval-ms:3000}") long pollIntervalMs,
-            @Value("${sensor.multi.poll-limit:200}") int pollLimit,
-            @Value("${sensor.multi.initial-lookback-seconds:90}") long initialLookbackSeconds,
-            @Value("${sensor.multi.snapshot-concurrency:5}") int snapshotConcurrency
+            @Value("${sensor.multi.poll-interval-ms:12000}") long pollIntervalMs,
+            @Value("${sensor.multi.poll-limit:150}") int pollLimit,
+            @Value("${sensor.multi.snapshot-app-limit:1000}") int snapshotAppLimit,
+            @Value("${sensor.multi.initial-lookback-seconds:600}") long initialLookbackSeconds,
+            @Value("${sensor.multi.snapshot-concurrency:2}") int snapshotConcurrency,
+            @Value("${sensor.multi.snapshot-pace-ms:150}") long snapshotPaceMs,
+            @Value("${sensor.multi.snapshot-retries:5}") int snapshotRetries,
+            @Value("${sensor.multi.snapshot-timeout-seconds:15}") long snapshotTimeoutSeconds
     ) {
         this.webClient = webClientBuilder.build();
         this.ttnBaseUrl = ttnBaseUrl;
@@ -60,24 +72,33 @@ public class TtnAppStreamHub {
 
         this.pollIntervalMs = Math.max(1000, pollIntervalMs);
         this.pollLimit = Math.max(1, Math.min(pollLimit, 2000));
+        this.snapshotAppLimit = Math.max(50, Math.min(snapshotAppLimit, 2000));
         this.initialLookbackSeconds = Math.max(0, initialLookbackSeconds);
-        this.snapshotConcurrency = Math.max(1, Math.min(snapshotConcurrency, 20));
+
+        this.snapshotConcurrency = Math.max(1, Math.min(snapshotConcurrency, 5));
+        this.snapshotPaceMs = Math.max(0, Math.min(snapshotPaceMs, 2000));
+
+        this.snapshotRetries = Math.max(0, Math.min(snapshotRetries, 10));
+        this.snapshotTimeoutSeconds = Math.max(5, Math.min(snapshotTimeoutSeconds, 60));
+    }
+
+    private Semaphore lockFor(String appId) {
+        return appLocks.computeIfAbsent(appId, k -> new Semaphore(1));
     }
 
     /**
      * SSE stream:
-     *  - event:snapshot => fetch TTN latest per device (limit=1) et renvoie direct
-     *  - event:uplink    => ensuite live updates (app-level poll)
-     *  - :keepalive      => comment
+     *  - snapshot: 1 event par device demandé (latest même si vieux)
+     *  - live: uniquement si nouveau
+     *  - keepalive
      */
     public Flux<ServerSentEvent<String>> stream(String appId, String clientId, List<String> deviceIds) {
         AppStream appStream = streams.computeIfAbsent(appId, this::startStream);
 
-        // ✅ SNAPSHOT: appeler TTN device-by-device et renvoyer le dernier
-        Flux<ServerSentEvent<String>> snapshot = fetchLatestForDevices(appId, deviceIds)
+        Flux<ServerSentEvent<String>> snapshot = fetchSnapshot(appId, deviceIds)
+                .doOnNext(appStream::seedLastSeen)
                 .map(line -> ServerSentEvent.builder(line).event("snapshot").build());
 
-        // LIVE: filtrage local sur les deviceIds
         Flux<ServerSentEvent<String>> live = appStream.liveFor(deviceIds)
                 .map(line -> ServerSentEvent.builder(line).event("uplink").build())
                 .doOnSubscribe(sub -> appStream.subscribers.incrementAndGet())
@@ -102,7 +123,6 @@ public class TtnAppStreamHub {
 
     private AppStream startStream(String appId) {
         AppStream s = new AppStream(appId);
-
         s.afterCursor.set(Instant.now().minusSeconds(initialLookbackSeconds));
 
         s.future = scheduler.scheduleWithFixedDelay(
@@ -115,11 +135,16 @@ public class TtnAppStreamHub {
     }
 
     /**
-     * Poll app-level TTN storage (delta) et push dans sink.
-     * (Tu peux garder ton dédup ici si tu veux, je le laisse minimal)
+     * Live poll (app-level delta). sérialisé avec snapshot via lock.
      */
     private void pollOnce(AppStream s) {
+        Semaphore lock = lockFor(s.appId);
+        boolean acquired = false;
+
         try {
+            acquired = lock.tryAcquire(5, TimeUnit.SECONDS);
+            if (!acquired) return;
+
             Instant after = s.afterCursor.get();
 
             String url = UriComponentsBuilder
@@ -137,7 +162,7 @@ public class TtnAppStreamHub {
                     .header("Authorization", "Bearer " + ttnToken)
                     .retrieve()
                     .bodyToMono(String.class)
-                    .block(Duration.ofSeconds(15));
+                    .block(Duration.ofSeconds(20));
 
             if (body == null || body.isBlank()) return;
 
@@ -167,41 +192,71 @@ public class TtnAppStreamHub {
             }
             int n = s.retry.incrementAndGet();
             sleepQuietly(Math.min(10_000, computeBackoffMs(n)));
-
         } catch (Exception e) {
             int n = s.retry.incrementAndGet();
             sleepQuietly(Math.min(10_000, computeBackoffMs(n)));
+        } finally {
+            if (acquired) lock.release();
         }
     }
 
-    /**
-     * ✅ Snapshot TTN direct:
-     * pour chaque deviceId => GET device-specific uplink_message?limit=1&order=-received_at
-     * Concurrence limitée pour éviter 429.
-     */
-    private Flux<String> fetchLatestForDevices(String appId, List<String> deviceIds) {
-        if (deviceIds == null || deviceIds.isEmpty()) {
-            return Flux.empty();
-        }
+    // =========================================================
+    // SNAPSHOT
+    // =========================================================
+    private Flux<String> fetchSnapshot(String appId, List<String> deviceIds) {
+        final boolean hasList = (deviceIds != null && !deviceIds.isEmpty());
 
-        // dédoublonne au cas où
-        Set<String> wanted = new HashSet<>(deviceIds);
+        Semaphore lock = lockFor(appId);
+
+        Mono<Boolean> acquire = Mono.fromCallable(() -> {
+            lock.acquire();
+            return true;
+        });
+
+        Mono<Void> release = Mono.fromRunnable(lock::release);
+
+        return Flux.usingWhen(
+                acquire,
+                ok -> hasList
+                        ? fetchSnapshotDeviceByDeviceWithFallback(appId, deviceIds) // ✅ unitaire + fallback
+                        : fetchSnapshotAppLevelAll(appId),                          // ✅ tous
+                ok -> release,
+                (ok, err) -> release,
+                ok -> release
+        );
+    }
+
+    /**
+     * Liste => snapshot par device (route /devices/{deviceId}/...) + fallback app-level si ça rate.
+     */
+    private Flux<String> fetchSnapshotDeviceByDeviceWithFallback(String appId, List<String> deviceIds) {
+        LinkedHashSet<String> wanted = new LinkedHashSet<>(deviceIds);
 
         return Flux.fromIterable(wanted)
-                .flatMapSequential(
-                        devId -> fetchLatestForDevice(appId, devId)
-                                .onErrorResume(err -> Mono.empty()),
+                .delayElements(snapshotPaceMs > 0 ? Duration.ofMillis(snapshotPaceMs) : Duration.ZERO)
+                .flatMapSequential(devId ->
+                                fetchLatestForDevice(appId, devId)
+                                        .switchIfEmpty(Mono.just(noDataJson(devId, "NO_UPLINK_FOR_DEVICE")))
+                                        .onErrorResume(err ->
+                                                // ✅ fallback: une tentative app-level window puis extraction du device
+                                                fetchLatestForDeviceFromAppWindow(appId, devId)
+                                                        .switchIfEmpty(Mono.just(errorJson(devId, err)))
+                                        ),
                         snapshotConcurrency,
                         1
                 );
     }
 
+    /**
+     * ✅ Route unitaire TTN :
+     * /as/applications/{appId}/devices/{deviceId}/packages/storage/uplink_message?limit=1&order=-received_at
+     */
     private Mono<String> fetchLatestForDevice(String appId, String deviceId) {
         String url = UriComponentsBuilder
                 .fromHttpUrl(ttnBaseUrl)
                 .pathSegment("as", "applications", appId, "devices", deviceId, "packages", "storage", "uplink_message")
                 .queryParam("limit", 1)
-                .queryParam("order", "-received_at") // DESC
+                .queryParam("order", "-received_at")
                 .build()
                 .toUriString();
 
@@ -211,13 +266,145 @@ public class TtnAppStreamHub {
                 .header("Authorization", "Bearer " + ttnToken)
                 .retrieve()
                 .bodyToMono(String.class)
-                .timeout(Duration.ofSeconds(10))
+                .timeout(Duration.ofSeconds(snapshotTimeoutSeconds))
+                .flatMap(this::firstNdjsonLine)
+                .retryWhen(Retry.backoff(snapshotRetries, Duration.ofSeconds(1))
+                        .maxBackoff(Duration.ofSeconds(20))
+                        .filter(ex -> ex instanceof WebClientResponseException w
+                                && w.getStatusCode() == HttpStatus.TOO_MANY_REQUESTS)
+                );
+    }
+
+    /**
+     * Fallback: on lit une fenêtre app-level (DESC) et on prend le 1er event du device.
+     * Ça ne fait PAS 200 calls device-by-device en plus : c’est 1 call par device en échec.
+     */
+    private Mono<String> fetchLatestForDeviceFromAppWindow(String appId, String deviceId) {
+        String url = UriComponentsBuilder
+                .fromHttpUrl(ttnBaseUrl)
+                .pathSegment("as", "applications", appId, "packages", "storage", "uplink_message")
+                .queryParam("order", "-received_at")
+                .queryParam("limit", Math.min(snapshotAppLimit, 400)) // fenêtre plus petite pour fallback
+                .build()
+                .toUriString();
+
+        return webClient.get()
+                .uri(url)
+                .accept(MediaType.APPLICATION_NDJSON)
+                .header("Authorization", "Bearer " + ttnToken)
+                .retrieve()
+                .bodyToMono(String.class)
+                .timeout(Duration.ofSeconds(20))
                 .flatMap(body -> {
                     if (body == null || body.isBlank()) return Mono.empty();
-                    // NDJSON -> première ligne = dernier uplink
-                    String first = body.trim().split("\\r?\\n")[0];
-                    return (first == null || first.isBlank()) ? Mono.empty() : Mono.just(first);
-                });
+                    for (String line : body.split("\\r?\\n")) {
+                        if (line == null || line.isBlank()) continue;
+                        String dev = extractDeviceId(line);
+                        if (deviceId.equals(dev)) return Mono.just(line);
+                    }
+                    return Mono.empty();
+                })
+                .retryWhen(Retry.backoff(2, Duration.ofSeconds(1))
+                        .maxBackoff(Duration.ofSeconds(10))
+                        .filter(ex -> ex instanceof WebClientResponseException w
+                                && w.getStatusCode() == HttpStatus.TOO_MANY_REQUESTS)
+                );
+    }
+
+    /**
+     * DeviceIds vide => snapshot “tous les devices présents dans la fenêtre”.
+     */
+    private Flux<String> fetchSnapshotAppLevelAll(String appId) {
+        String url = UriComponentsBuilder
+                .fromHttpUrl(ttnBaseUrl)
+                .pathSegment("as", "applications", appId, "packages", "storage", "uplink_message")
+                .queryParam("order", "-received_at")
+                .queryParam("limit", snapshotAppLimit)
+                .build()
+                .toUriString();
+
+        return webClient.get()
+                .uri(url)
+                .accept(MediaType.APPLICATION_NDJSON)
+                .header("Authorization", "Bearer " + ttnToken)
+                .retrieve()
+                .bodyToMono(String.class)
+                .timeout(Duration.ofSeconds(25))
+                .flatMapMany(body -> {
+                    if (body == null || body.isBlank()) return Flux.empty();
+
+                    LinkedHashMap<String, String> latestByDevice = new LinkedHashMap<>();
+                    for (String line : body.split("\\r?\\n")) {
+                        if (line == null || line.isBlank()) continue;
+                        String devId = extractDeviceId(line);
+                        if (devId == null) continue;
+                        latestByDevice.putIfAbsent(devId, line);
+                    }
+                    return Flux.fromIterable(latestByDevice.values());
+                })
+                .retryWhen(Retry.backoff(5, Duration.ofSeconds(2))
+                        .maxBackoff(Duration.ofSeconds(30))
+                        .filter(ex -> ex instanceof WebClientResponseException w
+                                && w.getStatusCode() == HttpStatus.TOO_MANY_REQUESTS)
+                )
+                .onErrorResume(err -> Flux.empty());
+    }
+
+    private Mono<String> firstNdjsonLine(String body) {
+        if (body == null || body.isBlank()) return Mono.empty();
+        String first = body.trim().split("\\r?\\n")[0];
+        if (first == null || first.isBlank()) return Mono.empty();
+        return Mono.just(first);
+    }
+
+    // =========================================================
+    // JSON status helpers
+    // =========================================================
+    private String noDataJson(String deviceId, String reason) {
+        try {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("device_id", deviceId);
+            m.put("status", "NO_DATA");
+            m.put("reason", reason);
+            return mapper.writeValueAsString(m);
+        } catch (Exception e) {
+            return "{\"device_id\":\"" + deviceId + "\",\"status\":\"NO_DATA\",\"reason\":\"" + reason + "\"}";
+        }
+    }
+
+    private String errorJson(String deviceId, Throwable err) {
+        String msg = rootMessage(err);
+        try {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("device_id", deviceId);
+            m.put("status", "ERROR");
+            m.put("message", msg);
+            return mapper.writeValueAsString(m);
+        } catch (Exception e) {
+            return "{\"device_id\":\"" + deviceId + "\",\"status\":\"ERROR\",\"message\":\"" + msg.replace("\"", "'") + "\"}";
+        }
+    }
+
+    private String rootMessage(Throwable err) {
+        if (err == null) return "unknown";
+        Throwable cur = err;
+        while (cur.getCause() != null) cur = cur.getCause();
+        String msg = cur.getMessage();
+        if (msg == null || msg.isBlank()) msg = err.getMessage();
+        return msg != null ? msg : "unknown";
+    }
+
+    // =========================================================
+    // JSON extract helpers
+    // =========================================================
+    private String extractDeviceId(String line) {
+        try {
+            JsonNode root = mapper.readTree(line);
+            JsonNode result = root.path("result");
+            return result.path("end_device_ids").path("device_id").asText(null);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private Instant extractReceivedAt(String line) {
@@ -248,6 +435,9 @@ public class TtnAppStreamHub {
     private static class AppStream {
         final String appId;
 
+        final ConcurrentHashMap<String, Integer> lastFCntByDevice = new ConcurrentHashMap<>();
+        final ConcurrentHashMap<String, Instant> lastReceivedAtByDevice = new ConcurrentHashMap<>();
+
         final Sinks.Many<String> sink = Sinks.many().multicast().onBackpressureBuffer(10_000);
         final AtomicInteger subscribers = new AtomicInteger(0);
         final AtomicInteger retry = new AtomicInteger(0);
@@ -259,20 +449,55 @@ public class TtnAppStreamHub {
 
         AppStream(String appId) { this.appId = appId; }
 
-        Flux<String> liveFor(List<String> deviceIds) {
-            final Set<String> wanted = (deviceIds == null) ? Set.of() : new HashSet<>(deviceIds);
+        void seedLastSeen(String line) {
+            try {
+                JsonNode root = mapper.readTree(line);
+                JsonNode result = root.path("result");
+                String devId = result.path("end_device_ids").path("device_id").asText(null);
+                if (devId == null) return;
 
-            return sink.asFlux().filter(line -> {
-                if (wanted.isEmpty()) return true;
-                try {
-                    JsonNode root = mapper.readTree(line);
-                    JsonNode result = root.path("result");
-                    String devId = result.path("end_device_ids").path("device_id").asText(null);
-                    return devId != null && wanted.contains(devId);
-                } catch (Exception ex) {
-                    return false;
-                }
-            });
+                JsonNode f = result.path("uplink_message").path("f_cnt");
+                if (f.isNumber()) lastFCntByDevice.put(devId, f.asInt());
+
+                String ra = result.path("received_at").asText(null);
+                if (ra != null) lastReceivedAtByDevice.put(devId, Instant.parse(ra));
+            } catch (Exception ignored) {}
+        }
+
+        Flux<String> liveFor(List<String> deviceIds) {
+            final Set<String> wanted = (deviceIds == null || deviceIds.isEmpty())
+                    ? Set.of()
+                    : new HashSet<>(deviceIds);
+
+            return sink.asFlux()
+                    .filter(line -> {
+                        try {
+                            JsonNode root = mapper.readTree(line);
+                            JsonNode result = root.path("result");
+                            String devId = result.path("end_device_ids").path("device_id").asText(null);
+                            if (devId == null) return false;
+
+                            if (!wanted.isEmpty() && !wanted.contains(devId)) return false;
+
+                            JsonNode f = result.path("uplink_message").path("f_cnt");
+                            if (f.isNumber()) {
+                                int fcnt = f.asInt();
+                                Integer prev = lastFCntByDevice.put(devId, fcnt);
+                                return prev == null || fcnt > prev;
+                            }
+
+                            String ra = result.path("received_at").asText(null);
+                            if (ra != null) {
+                                Instant ts = Instant.parse(ra);
+                                Instant prevTs = lastReceivedAtByDevice.put(devId, ts);
+                                return prevTs == null || ts.isAfter(prevTs);
+                            }
+
+                            return true;
+                        } catch (Exception ex) {
+                            return false;
+                        }
+                    });
         }
     }
 }
