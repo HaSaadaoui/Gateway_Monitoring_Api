@@ -1,29 +1,50 @@
 package com.amaris.gatewaymonitoring.service;
 
+import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
+
+import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Service;
 
-import java.time.Instant;
-import java.util.Optional;
-import java.util.function.Consumer;
+import reactor.core.publisher.Flux;
 
 @Service
 public class AggregatorSensorService {
 
+    // legacy: debug / NDJSON borné
     private final SensorMonitoringService sensorMonitoringService;
 
-    public AggregatorSensorService(SensorMonitoringService sensorMonitoringService) {
+    // nouveau hub: snapshot TTN direct + live app-level filtré
+    private final TtnAppStreamHub ttnAppStreamHub;
+
+    public AggregatorSensorService(
+            SensorMonitoringService sensorMonitoringService,
+            TtnAppStreamHub ttnAppStreamHub
+    ) {
         this.sensorMonitoringService = sensorMonitoringService;
+        this.ttnAppStreamHub = ttnAppStreamHub;
     }
 
-    public void aggregateSensorMonitoring(String appId, String deviceId, String threadId, Consumer<String> callback) {
-        sensorMonitoringService.startTtnPolling(appId, deviceId, threadId, callback);
+    // =========================
+    // ✅ Nouveau hub multi (SSE)
+    // =========================
+    public Flux<ServerSentEvent<String>> streamManyLive(String appId, String clientId, List<String> deviceIds) {
+        return ttnAppStreamHub.stream(appId, clientId, deviceIds);
     }
 
-    public void stopSensorMonitoring(String threadId) {
-        sensorMonitoringService.stopTtnPolling(threadId);
+    // =========================
+    // ✅ Stop app stream (si tu as une route stop)
+    // =========================
+    public void stopAppStream(String appId) {
+        ttnAppStreamHub.stop(appId);
     }
 
-    public void aggregateGatewayDevices(String appId, Optional<Instant> after, Consumer<String> callback) {
-        sensorMonitoringService.probeGatewayDevices(appId, after, callback);
+    // =========================
+    // ✅ Debug / NDJSON borné
+    // (nécessite que SensorMonitoringService expose probeGatewayDevicesFlux)
+    // =========================
+    public Flux<String> aggregateGatewayDevicesBounded(String appId, Optional<Instant> after, int limit) {
+        return sensorMonitoringService.probeGatewayDevicesFlux(appId, after, limit);
     }
 }
