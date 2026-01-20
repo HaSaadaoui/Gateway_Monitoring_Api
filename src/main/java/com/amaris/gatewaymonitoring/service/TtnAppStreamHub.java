@@ -40,16 +40,8 @@ public class TtnAppStreamHub {
 
     private final long pollIntervalMs;
     private final int pollLimit;                 // live app-level limit
-    private final int snapshotAppLimit;          // snapshot app-level limit (si deviceIds vide ou fallback)
+    private final int snapshotAppLimit;          // snapshot app-level window size
     private final long initialLookbackSeconds;
-
-    // ✅ snapshot “par device” : limite de concurrence + pacing
-    private final int snapshotConcurrency;
-    private final long snapshotPaceMs;
-
-    // ✅ retry snapshot per-device
-    private final int snapshotRetries;
-    private final long snapshotTimeoutSeconds;
 
     private final ObjectMapper mapper = new ObjectMapper();
 
@@ -59,12 +51,8 @@ public class TtnAppStreamHub {
             @Value("${lorawan.service.token}") String ttnToken,
             @Value("${sensor.multi.poll-interval-ms:12000}") long pollIntervalMs,
             @Value("${sensor.multi.poll-limit:150}") int pollLimit,
-            @Value("${sensor.multi.snapshot-app-limit:1000}") int snapshotAppLimit,
-            @Value("${sensor.multi.initial-lookback-seconds:600}") long initialLookbackSeconds,
-            @Value("${sensor.multi.snapshot-concurrency:2}") int snapshotConcurrency,
-            @Value("${sensor.multi.snapshot-pace-ms:150}") long snapshotPaceMs,
-            @Value("${sensor.multi.snapshot-retries:5}") int snapshotRetries,
-            @Value("${sensor.multi.snapshot-timeout-seconds:15}") long snapshotTimeoutSeconds
+            @Value("${sensor.multi.snapshot-app-limit:1500}") int snapshotAppLimit,
+            @Value("${sensor.multi.initial-lookback-seconds:600}") long initialLookbackSeconds
     ) {
         this.webClient = webClientBuilder.build();
         this.ttnBaseUrl = ttnBaseUrl;
@@ -74,12 +62,6 @@ public class TtnAppStreamHub {
         this.pollLimit = Math.max(1, Math.min(pollLimit, 2000));
         this.snapshotAppLimit = Math.max(50, Math.min(snapshotAppLimit, 2000));
         this.initialLookbackSeconds = Math.max(0, initialLookbackSeconds);
-
-        this.snapshotConcurrency = Math.max(1, Math.min(snapshotConcurrency, 5));
-        this.snapshotPaceMs = Math.max(0, Math.min(snapshotPaceMs, 2000));
-
-        this.snapshotRetries = Math.max(0, Math.min(snapshotRetries, 10));
-        this.snapshotTimeoutSeconds = Math.max(5, Math.min(snapshotTimeoutSeconds, 60));
     }
 
     private Semaphore lockFor(String appId) {
@@ -88,11 +70,11 @@ public class TtnAppStreamHub {
 
     /**
      * SSE stream:
-     *  - snapshot: 1 event par device demandé (latest même si vieux)
+     *  - snapshot: 1 event par device demandé (latest même si vieux) OU tous si deviceIds vide
      *  - live: uniquement si nouveau
      *  - keepalive
      */
-    public Flux<ServerSentEvent<String>> stream(String appId, String clientId, List<String> deviceIds) {
+    public Flux<ServerSentEvent<String>> stream(String appId, List<String> deviceIds) {
         AppStream appStream = streams.computeIfAbsent(appId, this::startStream);
 
         Flux<ServerSentEvent<String>> snapshot = fetchSnapshot(appId, deviceIds)
@@ -177,6 +159,7 @@ public class TtnAppStreamHub {
                 s.sink.tryEmitNext(line);
             }
 
+            // avancer le curseur (nanos +1 pour éviter de relire le même event)
             s.afterCursor.set(maxSeen.plusNanos(1));
             s.retry.set(0);
 
@@ -201,10 +184,11 @@ public class TtnAppStreamHub {
     }
 
     // =========================================================
-    // SNAPSHOT
+    // SNAPSHOT (1 SEUL CALL APP-LEVEL, PUIS FILTRAGE)
     // =========================================================
     private Flux<String> fetchSnapshot(String appId, List<String> deviceIds) {
-        final boolean hasList = (deviceIds != null && !deviceIds.isEmpty());
+        final Set<String> wanted = (deviceIds == null) ? Set.of() : new LinkedHashSet<>(deviceIds);
+        final boolean filterWanted = !wanted.isEmpty();
 
         Semaphore lock = lockFor(appId);
 
@@ -217,104 +201,14 @@ public class TtnAppStreamHub {
 
         return Flux.usingWhen(
                 acquire,
-                ok -> hasList
-                        ? fetchSnapshotDeviceByDeviceWithFallback(appId, deviceIds) // ✅ unitaire + fallback
-                        : fetchSnapshotAppLevelAll(appId),                          // ✅ tous
+                ok -> fetchSnapshotAppLevelFiltered(appId, wanted, filterWanted),
                 ok -> release,
                 (ok, err) -> release,
                 ok -> release
         );
     }
 
-    /**
-     * Liste => snapshot par device (route /devices/{deviceId}/...) + fallback app-level si ça rate.
-     */
-    private Flux<String> fetchSnapshotDeviceByDeviceWithFallback(String appId, List<String> deviceIds) {
-        LinkedHashSet<String> wanted = new LinkedHashSet<>(deviceIds);
-
-        return Flux.fromIterable(wanted)
-                .delayElements(snapshotPaceMs > 0 ? Duration.ofMillis(snapshotPaceMs) : Duration.ZERO)
-                .flatMapSequential(devId ->
-                                fetchLatestForDevice(appId, devId)
-                                        .switchIfEmpty(Mono.just(noDataJson(devId, "NO_UPLINK_FOR_DEVICE")))
-                                        .onErrorResume(err ->
-                                                // ✅ fallback: une tentative app-level window puis extraction du device
-                                                fetchLatestForDeviceFromAppWindow(appId, devId)
-                                                        .switchIfEmpty(Mono.just(errorJson(devId, err)))
-                                        ),
-                        snapshotConcurrency,
-                        1
-                );
-    }
-
-    /**
-     * ✅ Route unitaire TTN :
-     * /as/applications/{appId}/devices/{deviceId}/packages/storage/uplink_message?limit=1&order=-received_at
-     */
-    private Mono<String> fetchLatestForDevice(String appId, String deviceId) {
-        String url = UriComponentsBuilder
-                .fromHttpUrl(ttnBaseUrl)
-                .pathSegment("as", "applications", appId, "devices", deviceId, "packages", "storage", "uplink_message")
-                .queryParam("limit", 1)
-                .queryParam("order", "-received_at")
-                .build()
-                .toUriString();
-
-        return webClient.get()
-                .uri(url)
-                .accept(MediaType.APPLICATION_NDJSON)
-                .header("Authorization", "Bearer " + ttnToken)
-                .retrieve()
-                .bodyToMono(String.class)
-                .timeout(Duration.ofSeconds(snapshotTimeoutSeconds))
-                .flatMap(this::firstNdjsonLine)
-                .retryWhen(Retry.backoff(snapshotRetries, Duration.ofSeconds(1))
-                        .maxBackoff(Duration.ofSeconds(20))
-                        .filter(ex -> ex instanceof WebClientResponseException w
-                                && w.getStatusCode() == HttpStatus.TOO_MANY_REQUESTS)
-                );
-    }
-
-    /**
-     * Fallback: on lit une fenêtre app-level (DESC) et on prend le 1er event du device.
-     * Ça ne fait PAS 200 calls device-by-device en plus : c’est 1 call par device en échec.
-     */
-    private Mono<String> fetchLatestForDeviceFromAppWindow(String appId, String deviceId) {
-        String url = UriComponentsBuilder
-                .fromHttpUrl(ttnBaseUrl)
-                .pathSegment("as", "applications", appId, "packages", "storage", "uplink_message")
-                .queryParam("order", "-received_at")
-                .queryParam("limit", Math.min(snapshotAppLimit, 400)) // fenêtre plus petite pour fallback
-                .build()
-                .toUriString();
-
-        return webClient.get()
-                .uri(url)
-                .accept(MediaType.APPLICATION_NDJSON)
-                .header("Authorization", "Bearer " + ttnToken)
-                .retrieve()
-                .bodyToMono(String.class)
-                .timeout(Duration.ofSeconds(20))
-                .flatMap(body -> {
-                    if (body == null || body.isBlank()) return Mono.empty();
-                    for (String line : body.split("\\r?\\n")) {
-                        if (line == null || line.isBlank()) continue;
-                        String dev = extractDeviceId(line);
-                        if (deviceId.equals(dev)) return Mono.just(line);
-                    }
-                    return Mono.empty();
-                })
-                .retryWhen(Retry.backoff(2, Duration.ofSeconds(1))
-                        .maxBackoff(Duration.ofSeconds(10))
-                        .filter(ex -> ex instanceof WebClientResponseException w
-                                && w.getStatusCode() == HttpStatus.TOO_MANY_REQUESTS)
-                );
-    }
-
-    /**
-     * DeviceIds vide => snapshot “tous les devices présents dans la fenêtre”.
-     */
-    private Flux<String> fetchSnapshotAppLevelAll(String appId) {
+    private Flux<String> fetchSnapshotAppLevelFiltered(String appId, Set<String> wanted, boolean filterWanted) {
         String url = UriComponentsBuilder
                 .fromHttpUrl(ttnBaseUrl)
                 .pathSegment("as", "applications", appId, "packages", "storage", "uplink_message")
@@ -331,30 +225,53 @@ public class TtnAppStreamHub {
                 .bodyToMono(String.class)
                 .timeout(Duration.ofSeconds(25))
                 .flatMapMany(body -> {
-                    if (body == null || body.isBlank()) return Flux.empty();
+                    if (body == null || body.isBlank()) {
+                        if (filterWanted) {
+                            return Flux.fromIterable(wanted)
+                                    .map(devId -> noDataJson(devId, "NO_UPLINK_IN_WINDOW"));
+                        }
+                        return Flux.empty();
+                    }
 
+                    // DESC => première occurrence = latest
                     LinkedHashMap<String, String> latestByDevice = new LinkedHashMap<>();
+
                     for (String line : body.split("\\r?\\n")) {
                         if (line == null || line.isBlank()) continue;
+
                         String devId = extractDeviceId(line);
                         if (devId == null) continue;
+
+                        if (filterWanted && !wanted.contains(devId)) continue;
+
                         latestByDevice.putIfAbsent(devId, line);
+
+                        if (filterWanted && latestByDevice.size() >= wanted.size()) break;
                     }
-                    return Flux.fromIterable(latestByDevice.values());
+
+                    if (!filterWanted) {
+                        return Flux.fromIterable(latestByDevice.values());
+                    }
+
+                    List<String> out = new ArrayList<>(wanted.size());
+                    for (String devId : wanted) {
+                        String line = latestByDevice.get(devId);
+                        out.add(line != null ? line : noDataJson(devId, "NO_UPLINK_IN_WINDOW"));
+                    }
+                    return Flux.fromIterable(out);
                 })
                 .retryWhen(Retry.backoff(5, Duration.ofSeconds(2))
                         .maxBackoff(Duration.ofSeconds(30))
                         .filter(ex -> ex instanceof WebClientResponseException w
                                 && w.getStatusCode() == HttpStatus.TOO_MANY_REQUESTS)
                 )
-                .onErrorResume(err -> Flux.empty());
-    }
-
-    private Mono<String> firstNdjsonLine(String body) {
-        if (body == null || body.isBlank()) return Mono.empty();
-        String first = body.trim().split("\\r?\\n")[0];
-        if (first == null || first.isBlank()) return Mono.empty();
-        return Mono.just(first);
+                .onErrorResume(err -> {
+                    if (filterWanted) {
+                        return Flux.fromIterable(wanted)
+                                .map(devId -> errorJson(devId, err));
+                    }
+                    return Flux.empty();
+                });
     }
 
     // =========================================================

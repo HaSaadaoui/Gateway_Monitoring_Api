@@ -26,15 +26,13 @@ public class SensorController {
     // =========================================================
     // ✅ SSE LIVE multi-devices (200+) : snapshot TTN direct + live
     // =========================================================
-    // POST /api/monitoring/app/{appId}/stream?clientId=xxx
     // Body: ["desk-03-81","co2-03-02", ...] ou [] pour tout recevoir
     @PostMapping(value = "/app/{appId}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> streamManyLive(
             @PathVariable String appId,
-            @RequestParam(required = false, defaultValue = "client") String clientId,
             @RequestBody(required = false) List<String> deviceIds
     ) {
-        return aggregatorSensorService.streamManyLive(appId, clientId, deviceIds);
+        return aggregatorSensorService.streamManyLive(appId, deviceIds);
     }
 
     // =========================================================

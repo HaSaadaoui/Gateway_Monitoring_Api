@@ -29,8 +29,8 @@ public class AggregatorSensorService {
     // =========================
     // ✅ Nouveau hub multi (SSE)
     // =========================
-    public Flux<ServerSentEvent<String>> streamManyLive(String appId, String clientId, List<String> deviceIds) {
-        return ttnAppStreamHub.stream(appId, clientId, deviceIds);
+    public Flux<ServerSentEvent<String>> streamManyLive(String appId, List<String> deviceIds) {
+        return ttnAppStreamHub.stream(appId, deviceIds);
     }
 
     // =========================
