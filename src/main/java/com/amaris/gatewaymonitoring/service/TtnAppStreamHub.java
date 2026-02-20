@@ -14,6 +14,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 import reactor.util.retry.Retry;
+import reactor.core.scheduler.Schedulers;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -32,15 +33,14 @@ public class TtnAppStreamHub {
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(8);
     private final ConcurrentHashMap<String, AppStream> streams = new ConcurrentHashMap<>();
 
-    // ✅ verrou TTN par appId (évite snapshot+poll en parallèle => 429)
     private final ConcurrentHashMap<String, Semaphore> appLocks = new ConcurrentHashMap<>();
 
     private final long backoffBaseMs = 1_000;
     private final long backoffMaxMs  = 60_000;
 
     private final long pollIntervalMs;
-    private final int pollLimit;                 // live app-level limit
-    private final int snapshotAppLimit;          // snapshot app-level window size
+    private final int pollLimit;
+    private final int snapshotAppLimit;
     private final long initialLookbackSeconds;
 
     private final ObjectMapper mapper = new ObjectMapper();
@@ -82,17 +82,17 @@ public class TtnAppStreamHub {
                 .map(line -> ServerSentEvent.builder(line).event("snapshot").build());
 
         Flux<ServerSentEvent<String>> live = appStream.liveFor(deviceIds)
-                .map(line -> ServerSentEvent.builder(line).event("uplink").build())
+                .map(line -> ServerSentEvent.builder(line).event("uplink").build());
+
+        Flux<ServerSentEvent<String>> keepAlive = Flux.interval(Duration.ofSeconds(60))
+                .map(i -> ServerSentEvent.<String>builder().comment("keepalive").build());
+
+        return Flux.merge(snapshot, live, keepAlive)
                 .doOnSubscribe(sub -> appStream.subscribers.incrementAndGet())
                 .doFinally(sig -> {
                     int n = appStream.subscribers.decrementAndGet();
                     if (n <= 0) stop(appId);
                 });
-
-        Flux<ServerSentEvent<String>> keepAlive = Flux.interval(Duration.ofSeconds(60))
-                .map(i -> ServerSentEvent.<String>builder().comment("keepalive").build());
-
-        return snapshot.concatWith(live).mergeWith(keepAlive);
     }
 
     public void stop(String appId) {
@@ -115,96 +115,96 @@ public class TtnAppStreamHub {
         );
         return s;
     }
-
     /**
      * Live poll (app-level delta). sérialisé avec snapshot via lock.
      */
+
     private void pollOnce(AppStream s) {
         Semaphore lock = lockFor(s.appId);
-        boolean acquired = false;
 
-        try {
-            acquired = lock.tryAcquire(5, TimeUnit.SECONDS);
-            if (!acquired) return;
+        if (!lock.tryAcquire()) return;
 
-            Instant after = s.afterCursor.get();
+        final Instant after = s.afterCursor.get();
+        final AtomicReference<Instant> maxSeen = new AtomicReference<>(after);
 
-            String url = UriComponentsBuilder
-                    .fromHttpUrl(ttnBaseUrl)
-                    .pathSegment("as", "applications", s.appId, "packages", "storage", "uplink_message")
-                    .queryParam("order", "received_at") // ASC
-                    .queryParam("after", after.toString())
-                    .queryParam("limit", pollLimit)
-                    .build()
-                    .toUriString();
+        String url = UriComponentsBuilder
+                .fromHttpUrl(ttnBaseUrl)
+                .pathSegment("as", "applications", s.appId, "packages", "storage", "uplink_message")
+                .queryParam("order", "received_at") // ASC
+                .queryParam("after", after.toString())
+                .queryParam("limit", pollLimit)
+                .build()
+                .toUriString();
 
-            String body = webClient.get()
-                    .uri(url)
-                    .accept(MediaType.APPLICATION_NDJSON)
-                    .header("Authorization", "Bearer " + ttnToken)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .block(Duration.ofSeconds(20));
+        webClient.get()
+                .uri(url)
+                .accept(MediaType.APPLICATION_NDJSON)
+                .header("Authorization", "Bearer " + ttnToken)
+                .retrieve()
+                .bodyToFlux(String.class) // NDJSON ligne par ligne
+                .timeout(Duration.ofSeconds(20))
+                .doOnNext(line -> {
+                    if (line == null || line.isBlank()) return;
 
-            if (body == null || body.isBlank()) return;
+                    Instant ra = extractReceivedAt(line);
+                    if (ra != null && ra.isAfter(maxSeen.get())) {
+                        maxSeen.set(ra);
+                    }
 
-            Instant maxSeen = after;
-
-            for (String line : body.split("\\r?\\n")) {
-                if (line == null || line.isBlank()) continue;
-
-                Instant ra = extractReceivedAt(line);
-                if (ra != null && ra.isAfter(maxSeen)) maxSeen = ra;
-
-                s.sink.tryEmitNext(line);
-            }
-
-            // avancer le curseur (nanos +1 pour éviter de relire le même event)
-            s.afterCursor.set(maxSeen.plusNanos(1));
-            s.retry.set(0);
-
-        } catch (WebClientResponseException e) {
-            if (e.getStatusCode() == HttpStatus.TOO_MANY_REQUESTS) {
-                int n = s.retry.incrementAndGet();
-                sleepQuietly(computeBackoffMs(n));
-                return;
-            }
-            if (e.getStatusCode() == HttpStatus.UNAUTHORIZED || e.getStatusCode() == HttpStatus.FORBIDDEN) {
-                stop(s.appId);
-                return;
-            }
-            int n = s.retry.incrementAndGet();
-            sleepQuietly(Math.min(10_000, computeBackoffMs(n)));
-        } catch (Exception e) {
-            int n = s.retry.incrementAndGet();
-            sleepQuietly(Math.min(10_000, computeBackoffMs(n)));
-        } finally {
-            if (acquired) lock.release();
-        }
+                    s.sink.tryEmitNext(line);
+                })
+                .doOnComplete(() -> {
+                    Instant ms = maxSeen.get();
+                    if (ms.isAfter(after)) {
+                        s.afterCursor.set(ms.plusNanos(1)); // évite doublon
+                    }
+                    s.retry.set(0);
+                })
+                .retryWhen(Retry.backoff(Long.MAX_VALUE, Duration.ofMillis(backoffBaseMs))
+                        .maxBackoff(Duration.ofMillis(backoffMaxMs))
+                        .jitter(0.5)
+                        .filter(ex -> ex instanceof WebClientResponseException w
+                                && w.getStatusCode() == HttpStatus.TOO_MANY_REQUESTS)
+                        .doAfterRetry(rs -> s.retry.incrementAndGet())
+                )
+                .doOnError(err -> {
+                    if (err instanceof WebClientResponseException wex) {
+                        if (wex.getStatusCode() == HttpStatus.UNAUTHORIZED
+                                || wex.getStatusCode() == HttpStatus.FORBIDDEN) {
+                            stop(s.appId);
+                        }
+                    }
+                })
+                .doFinally(sig -> lock.release())
+                .subscribe();
     }
 
-    // =========================================================
-    // SNAPSHOT (1 SEUL CALL APP-LEVEL, PUIS FILTRAGE)
-    // =========================================================
     private Flux<String> fetchSnapshot(String appId, List<String> deviceIds) {
         final Set<String> wanted = (deviceIds == null) ? Set.of() : new LinkedHashSet<>(deviceIds);
         final boolean filterWanted = !wanted.isEmpty();
 
         Semaphore lock = lockFor(appId);
 
-        Mono<Boolean> acquire = Mono.fromCallable(() -> {
-            lock.acquire();
-            return true;
-        });
-
-        Mono<Void> release = Mono.fromRunnable(lock::release);
+        Mono<Boolean> acquire = Mono.fromCallable(() -> lock.tryAcquire(30, TimeUnit.SECONDS))
+                .subscribeOn(Schedulers.boundedElastic());
 
         return Flux.usingWhen(
                 acquire,
-                ok -> fetchSnapshotAppLevelFiltered(appId, wanted, filterWanted),
-                ok -> release,
-                (ok, err) -> release,
-                ok -> release
+                ok -> ok
+                        ? fetchSnapshotAppLevelFiltered(appId, wanted, filterWanted)
+                        : Flux.empty(),
+                ok -> {
+                    if (ok) lock.release();
+                    return Mono.empty();
+                },
+                (ok, err) -> {
+                    if (ok) lock.release();
+                    return Mono.empty();
+                },
+                ok -> {
+                    if (ok) lock.release();
+                    return Mono.empty();
+                }
         );
     }
 
@@ -217,49 +217,41 @@ public class TtnAppStreamHub {
                 .build()
                 .toUriString();
 
+        LinkedHashMap<String, String> latestByDevice = new LinkedHashMap<>();
+
         return webClient.get()
                 .uri(url)
                 .accept(MediaType.APPLICATION_NDJSON)
                 .header("Authorization", "Bearer " + ttnToken)
                 .retrieve()
-                .bodyToMono(String.class)
+                .bodyToFlux(String.class)
                 .timeout(Duration.ofSeconds(25))
-                .flatMapMany(body -> {
-                    if (body == null || body.isBlank()) {
-                        if (filterWanted) {
-                            return Flux.fromIterable(wanted)
-                                    .map(devId -> noDataJson(devId, "NO_UPLINK_IN_WINDOW"));
-                        }
-                        return Flux.empty();
+                .handle((String line, reactor.core.publisher.SynchronousSink<String> sink) -> {
+                    if (line == null || line.isBlank()) return;
+
+                    String devId = extractDeviceId(line);
+                    if (devId == null) return;
+
+                    if (filterWanted && !wanted.contains(devId)) return;
+
+                    if (latestByDevice.putIfAbsent(devId, line) == null) {
+                        sink.next(line);
                     }
 
-                    // DESC => première occurrence = latest
-                    LinkedHashMap<String, String> latestByDevice = new LinkedHashMap<>();
-
-                    for (String line : body.split("\\r?\\n")) {
-                        if (line == null || line.isBlank()) continue;
-
-                        String devId = extractDeviceId(line);
-                        if (devId == null) continue;
-
-                        if (filterWanted && !wanted.contains(devId)) continue;
-
-                        latestByDevice.putIfAbsent(devId, line);
-
-                        if (filterWanted && latestByDevice.size() >= wanted.size()) break;
+                    if (filterWanted && latestByDevice.size() >= wanted.size()) {
+                        sink.complete();
                     }
-
-                    if (!filterWanted) {
-                        return Flux.fromIterable(latestByDevice.values());
-                    }
-
-                    List<String> out = new ArrayList<>(wanted.size());
-                    for (String devId : wanted) {
-                        String line = latestByDevice.get(devId);
-                        out.add(line != null ? line : noDataJson(devId, "NO_UPLINK_IN_WINDOW"));
-                    }
-                    return Flux.fromIterable(out);
                 })
+                .concatWith(Flux.defer(() -> {
+                    if (!filterWanted) return Flux.<String>empty();
+
+                    List<String> missing = wanted.stream()
+                            .filter(id -> !latestByDevice.containsKey(id))
+                            .map(id -> noDataJson(id, "NO_UPLINK_IN_WINDOW"))
+                            .toList();
+
+                    return Flux.fromIterable(missing);
+                }))
                 .retryWhen(Retry.backoff(5, Duration.ofSeconds(2))
                         .maxBackoff(Duration.ofSeconds(30))
                         .filter(ex -> ex instanceof WebClientResponseException w
@@ -268,15 +260,13 @@ public class TtnAppStreamHub {
                 .onErrorResume(err -> {
                     if (filterWanted) {
                         return Flux.fromIterable(wanted)
-                                .map(devId -> errorJson(devId, err));
+                                .map(devId -> errorJson(devId, err))
+                                .cast(String.class);
                     }
-                    return Flux.empty();
+                    return Flux.<String>empty();
                 });
     }
 
-    // =========================================================
-    // JSON status helpers
-    // =========================================================
     private String noDataJson(String deviceId, String reason) {
         try {
             Map<String, Object> m = new LinkedHashMap<>();
@@ -311,9 +301,6 @@ public class TtnAppStreamHub {
         return msg != null ? msg : "unknown";
     }
 
-    // =========================================================
-    // JSON extract helpers
-    // =========================================================
     private String extractDeviceId(String line) {
         try {
             JsonNode root = mapper.readTree(line);
@@ -346,16 +333,13 @@ public class TtnAppStreamHub {
         try { Thread.sleep(ms); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
     }
 
-    // =====================
-    // Inner class AppStream
-    // =====================
     private static class AppStream {
         final String appId;
 
         final ConcurrentHashMap<String, Integer> lastFCntByDevice = new ConcurrentHashMap<>();
         final ConcurrentHashMap<String, Instant> lastReceivedAtByDevice = new ConcurrentHashMap<>();
 
-        final Sinks.Many<String> sink = Sinks.many().multicast().onBackpressureBuffer(10_000);
+        final Sinks.Many<String> sink = Sinks.many().multicast().directBestEffort();
         final AtomicInteger subscribers = new AtomicInteger(0);
         final AtomicInteger retry = new AtomicInteger(0);
         final AtomicReference<Instant> afterCursor = new AtomicReference<>();
