@@ -252,6 +252,34 @@ public class TtnAppStreamHub {
                 });
     }
 
+    public Flux<String> probeGatewayDevicesFlux(String appId, Optional<Instant> after, int limit) {
+        String token = lorawanProperties.getToken().getOrDefault(appId,
+                lorawanProperties.getToken().values().stream().findFirst().orElse(""));
+
+        UriComponentsBuilder urlBuilder = UriComponentsBuilder
+                .fromHttpUrl(ttnBaseUrl)
+                .pathSegment("as", "applications", appId, "packages", "storage", "uplink_message")
+                .queryParam("order", "-received_at")
+                .queryParam("limit", Math.max(1, Math.min(limit, 200)));
+
+        after.ifPresent(instant -> urlBuilder.queryParam("after", instant.toString()));
+
+        return webClient.get()
+                .uri(urlBuilder.build().toUriString())
+                .accept(MediaType.APPLICATION_NDJSON)
+                .header("Authorization", "Bearer " + token)
+                .retrieve()
+                .bodyToFlux(String.class)
+                .filter(line -> line != null && !line.isBlank())
+                .retryWhen(
+                        Retry.backoff(10, Duration.ofSeconds(2))
+                                .maxBackoff(Duration.ofSeconds(60))
+                                .jitter(0.3)
+                                .filter(ex -> ex instanceof WebClientResponseException.TooManyRequests)
+                )
+                .onErrorResume(WebClientResponseException.TooManyRequests.class, e -> Flux.empty());
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
     private String extractDeviceIdSafe(String line) {
