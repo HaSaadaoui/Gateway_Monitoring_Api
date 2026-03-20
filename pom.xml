@@ -74,6 +74,11 @@
 			<version>2.15.0</version>
 		</dependency>
 
+        <dependency>
+            <groupId>org.eclipse.paho</groupId>
+            <artifactId>org.eclipse.paho.client.mqttv3</artifactId>
+            <version>1.2.5</version>
+        </dependency>
 		<!-- Pour utiliser webClient -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
