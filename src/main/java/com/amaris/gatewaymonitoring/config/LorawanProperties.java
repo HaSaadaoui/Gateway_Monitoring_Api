@@ -15,6 +15,10 @@ public class LorawanProperties {
     private List<String> apps = new ArrayList<>();
     private Map<String, String> token = new HashMap<>();
 
+    private String baseurl;
+    public String getBaseurl() { return baseurl; }
+    public void setBaseurl(String baseurl) { this.baseurl = baseurl; }
+
     public List<String> getApps() { return apps; }
     public void setApps(List<String> apps) { this.apps = apps; }
 
