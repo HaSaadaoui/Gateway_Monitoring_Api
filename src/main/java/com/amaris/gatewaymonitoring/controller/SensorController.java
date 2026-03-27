@@ -4,6 +4,7 @@ import com.amaris.gatewaymonitoring.service.TtnAppStreamHub;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import org.springframework.http.MediaType;
@@ -40,6 +41,18 @@ public class SensorController {
             @RequestParam(defaultValue = "200") int limit
     ) {
         return ttnAppStreamHub.probeGatewayDevicesFlux(appId, after, limit);
+    }
+
+    // GET /api/monitoring/app/{appId}/latest
+    // Retourne instantanément le dernier message connu par device depuis le cache mémoire MQTT.
+    // Utilisé pour l'affichage initial du plan 2D sans attendre le snapshot TTN.
+    @GetMapping("/app/{appId}/latest")
+    public ResponseEntity<Map<String, String>> getLatestCached(@PathVariable String appId) {
+        Map<String, String> cache = ttnAppStreamHub.getLatestFromCache(appId);
+        if (cache.isEmpty()) {
+            return ResponseEntity.noContent().build();
+        }
+        return ResponseEntity.ok(cache);
     }
 
     // POST /api/monitoring/app/{appId}/stream/stop

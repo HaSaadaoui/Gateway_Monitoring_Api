@@ -25,6 +25,7 @@ import reactor.util.retry.Retry;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
+import java.util.Collections;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -45,6 +46,11 @@ public class TtnAppStreamHub {
     // Un MqttClient par appId
     private final ConcurrentHashMap<String, MqttClient> mqttClients = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, AppStream> streams = new ConcurrentHashMap<>();
+
+    // Cache mémoire : appId → (deviceId → dernier message wrappé)
+    // Alimenté en continu par MQTT, évite de requêter TTN REST à chaque connexion SSE
+    private final ConcurrentHashMap<String, ConcurrentHashMap<String, String>> latestByAppDevice =
+            new ConcurrentHashMap<>();
 
     public TtnAppStreamHub(
             WebClient.Builder webClientBuilder,
@@ -102,9 +108,19 @@ public class TtnAppStreamHub {
                 String payload = new String(message.getPayload());
                 log.debug("📡 MQTT reçu → appId={} | topic={}", appId, t);
 
+                String wrapped = wrapAsResult(payload);
+
+                // Mise à jour du cache mémoire
+                String devId = extractDeviceIdFromRawPayload(payload);
+                if (devId != null) {
+                    latestByAppDevice
+                            .computeIfAbsent(appId, k -> new ConcurrentHashMap<>())
+                            .put(devId, wrapped);
+                }
+
                 AppStream s = streams.get(appId);
                 if (s != null) {
-                    s.sink.tryEmitNext(wrapAsResult(payload));
+                    s.sink.tryEmitNext(wrapped);
                 } else {
                     log.debug("⚠️  Aucun stream actif pour appId={}", appId);
                 }
@@ -192,7 +208,38 @@ public class TtnAppStreamHub {
     private Flux<String> fetchSnapshot(String appId, List<String> deviceIds) {
         final Set<String> wanted = (deviceIds == null) ? Set.of() : new LinkedHashSet<>(deviceIds);
         final boolean filterWanted = !wanted.isEmpty();
-        log.info("📸 Snapshot → appId={} | devices={}", appId, filterWanted ? wanted : "ALL");
+
+        ConcurrentHashMap<String, String> appCache = latestByAppDevice.get(appId);
+
+        if (appCache != null && !appCache.isEmpty()) {
+            // Filtrage depuis le cache mémoire
+            List<String> fromCache = appCache.entrySet().stream()
+                    .filter(e -> !filterWanted || wanted.contains(e.getKey()))
+                    .map(Map.Entry::getValue)
+                    .toList();
+
+            if (!filterWanted || fromCache.size() >= wanted.size()) {
+                // Cache complet : pas besoin de requêter TTN
+                log.info("⚡ Snapshot depuis cache → appId={} | {} devices (TTN REST ignoré)", appId, fromCache.size());
+                return Flux.fromIterable(fromCache);
+            }
+
+            // Cache partiel : on sert ce qu'on a + on complète avec TTN pour les manquants
+            Set<String> cached = fromCache.stream()
+                    .map(this::extractDeviceIdSafe)
+                    .collect(java.util.stream.Collectors.toSet());
+            Set<String> missing = new LinkedHashSet<>(wanted);
+            missing.removeAll(cached);
+            log.info("⚡ Snapshot partiel depuis cache → appId={} | {} cached, {} missing → TTN",
+                    appId, fromCache.size(), missing.size());
+
+            Flux<String> cacheFlux = Flux.fromIterable(fromCache);
+            Flux<String> ttnFlux   = fetchSnapshotAppLevelFiltered(appId, missing, true);
+            return Flux.concat(cacheFlux, ttnFlux);
+        }
+
+        // Cache vide (démarrage à froid) : snapshot TTN classique
+        log.info("📸 Snapshot TTN (cache vide) → appId={} | devices={}", appId, filterWanted ? wanted : "ALL");
         return fetchSnapshotAppLevelFiltered(appId, wanted, filterWanted);
     }
 
@@ -294,6 +341,23 @@ public class TtnAppStreamHub {
             return mapper.readTree(line).path("result")
                     .path("end_device_ids").path("device_id").asText(null);
         } catch (Exception e) { return null; }
+    }
+
+    /** Extrait le device_id depuis un payload MQTT brut (non wrappé dans "result"). */
+    private String extractDeviceIdFromRawPayload(String rawPayload) {
+        try {
+            return mapper.readTree(rawPayload)
+                    .path("end_device_ids").path("device_id").asText(null);
+        } catch (Exception e) { return null; }
+    }
+
+    /**
+     * Retourne le cache mémoire des derniers messages pour une app.
+     * Clé = deviceId, valeur = dernier message JSON wrappé {"result": ...}.
+     */
+    public Map<String, String> getLatestFromCache(String appId) {
+        return Collections.unmodifiableMap(
+                latestByAppDevice.getOrDefault(appId, new ConcurrentHashMap<>()));
     }
 
     private String noDataJson(String deviceId, String reason) {
